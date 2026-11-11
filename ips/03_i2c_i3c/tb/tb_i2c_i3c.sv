@@ -13,8 +13,32 @@ module tb_i2c_i3c;
 
   logic scl_o, scl_oe, sda_o, sda_oe;
   wire  scl_bus = scl_oe ? scl_o : 1'b1;
-  // Simple pullup + target ACK responder when not driven by master
-  wire  sda_bus = sda_oe ? sda_o : 1'b0;
+  // Open-drain SDA with pull-up (released line = 1) plus a behavioral target that ACKs every byte
+  logic tgt_pull_q, tgt_active_q;
+  int   tgt_bits_q;
+  wire  sda_bus = (sda_oe ? sda_o : 1'b1) & ~tgt_pull_q;
+
+  // Single process: START / STOP detect on SDA edges while SCL is high, ACK slot on SCL edges.
+  // Non-blocking updates keep the pull-down change from racing with this process' own event control.
+  logic tgt_scl_prev_q, tgt_sda_prev_q;
+  initial begin
+    tgt_pull_q = 1'b0; tgt_active_q = 1'b0; tgt_bits_q = 0;
+    tgt_scl_prev_q = 1'b1; tgt_sda_prev_q = 1'b1;
+  end
+  always @(sda_bus or scl_bus) begin
+    tgt_scl_prev_q <= scl_bus;
+    tgt_sda_prev_q <= sda_bus;
+    if (scl_bus && tgt_scl_prev_q && tgt_sda_prev_q && !sda_bus) begin           // START
+      tgt_active_q <= 1'b1; tgt_bits_q <= 0;
+    end else if (scl_bus && tgt_scl_prev_q && !tgt_sda_prev_q && sda_bus) begin  // STOP
+      tgt_active_q <= 1'b0; tgt_pull_q <= 1'b0;
+    end else if (tgt_active_q && !tgt_scl_prev_q && scl_bus) begin               // SCL rise: count bit
+      tgt_bits_q <= tgt_bits_q + 1;
+    end else if (tgt_active_q && tgt_scl_prev_q && !scl_bus) begin               // SCL fall: ACK slot
+      if (tgt_bits_q == 8) tgt_pull_q <= 1'b1;
+      else if (tgt_bits_q == 9) begin tgt_pull_q <= 1'b0; tgt_bits_q <= 0; end
+    end
+  end
 
   i2c_i3c_wb  u_wb  (.clk_i(clk), .rst_ni(rst_n), .wb_i(wb_m), .wb_o(wb_s),
     .scl_i(scl_bus), .scl_o(scl_o), .scl_oe_o(scl_oe), .sda_i(sda_bus), .sda_o(sda_o), .sda_oe_o(sda_oe), .irq_o());

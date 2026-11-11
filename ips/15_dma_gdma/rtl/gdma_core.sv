@@ -155,9 +155,7 @@ module gdma_core
 
       DMA_DST_WR_WAIT: begin
         if (dma_rsp_i.resp_valid && ch_ctrl_q[act_ch_q][5]) begin
-          logic [3:0] ps;
-          ps = ch_ctrl_q[act_ch_q][9:6];
-          if (int'(ps) < NUM_PERIPH) periph_ack_o[ps] = 1'b1;
+          if (int'(ch_ctrl_q[act_ch_q][9:6]) < NUM_PERIPH) periph_ack_o[ch_ctrl_q[act_ch_q][9:6]] = 1'b1;
         end
       end
 
@@ -195,11 +193,12 @@ module gdma_core
           done_st_q <= done_st_q & ~csr_req_i.wdata[NUM_CH-1:0];
           err_st_q  <= err_st_q  & ~csr_req_i.wdata[8 +: NUM_CH];
         end else if (reg_off >= 8'h20) begin
-          int c_idx, c_sub;
-          c_idx = int'((reg_off - 8'h20) >> 5);
-          c_sub = int'((reg_off - 8'h20) & 8'h1F);
+          logic [7:0] rel_off;
+          int         c_idx;
+          rel_off = reg_off - 8'h20;
+          c_idx   = int'(rel_off) >> 5;
           if (c_idx < NUM_CH) begin
-            unique case (c_sub)
+            unique case (rel_off & 8'h1F)
               8'h00: ch_ctrl_q[c_idx] <= csr_req_i.wdata;
               8'h04: ch_src_q[c_idx]  <= csr_req_i.wdata;
               8'h08: ch_dst_q[c_idx]  <= csr_req_i.wdata;
@@ -319,11 +318,12 @@ module gdma_core
     end else if (reg_off == 8'h08) begin
       csr_rsp_o.rdata = {16'd0, 8'(err_st_q), 8'(done_st_q)};
     end else if (reg_off >= 8'h20) begin
-      int c_idx, c_sub;
-      c_idx = int'((reg_off - 8'h20) >> 5);
-      c_sub = int'((reg_off - 8'h20) & 8'h1F);
+      logic [7:0] rel_off;
+      int         c_idx;
+      rel_off = reg_off - 8'h20;
+      c_idx   = int'(rel_off) >> 5;
       if (c_idx < NUM_CH) begin
-        unique case (c_sub)
+        unique case (rel_off & 8'h1F)
           8'h00: csr_rsp_o.rdata = ch_ctrl_q[c_idx];
           8'h04: csr_rsp_o.rdata = ch_src_q[c_idx];
           8'h08: csr_rsp_o.rdata = ch_dst_q[c_idx];

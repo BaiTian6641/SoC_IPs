@@ -43,15 +43,19 @@ module tb_jtag;
     s_wb_m = '0; s_axi_m = '0; s_tl_m = '0;
     repeat (4) @(posedge clk); rst_n = 1'b1;
 
+    // The slave TAP is synchronized to clk_i (2-FF sync + edge detect + TDO register), so TCK must be
+    // slower than ~clk/8 for the master to sample TDO correctly: use tck_half_div = 8 (TCK = clk/16).
+    do_wb_write(s_wb_m, s_wb_s, 32'h00, 32'h0000_0803);
+
     // Navigate Slave TAP from Test-Logic-Reset -> Run-Test/Idle -> Select-DR -> Capture-DR -> Shift-DR (4 bits: TMS=4'b0010)
     do_wb_write(s_wb_m, s_wb_s, 32'h0C, 32'h0000_0002); // TMS: 0(Idle), 1(SelDR), 0(CapDR), 0(ShiftDR)
     do_wb_write(s_wb_m, s_wb_s, 32'h04, 32'h0000_0104); // Shift 4 bits
-    repeat (40) @(posedge clk);
+    repeat (200) @(posedge clk);
 
     // Shift 32 bits of IDCODE out!
     do_wb_write(s_wb_m, s_wb_s, 32'h0C, 32'h0000_0000);
     do_wb_write(s_wb_m, s_wb_s, 32'h04, 32'h0000_0120); // Shift 32 bits
-    repeat (200) @(posedge clk);
+    repeat (800) @(posedge clk);
     do_wb_read (s_wb_m, s_wb_s, 32'h10, idcode_rd);
     if (idcode_rd !== 32'h1495_11C3) $fatal(1, "JTAG IDCODE mismatch: %h", idcode_rd);
 

@@ -48,6 +48,7 @@ module xspi_xip_core
   logic [15:0] xip_cfg_q;
   logic        ind_done_q;
   logic [7:0]  hit_cnt_q;
+  logic        hit_seen_q;
 
   wire enable      = ctrl_q[0];
   wire xip_en      = ctrl_q[1];
@@ -158,6 +159,7 @@ module xspi_xip_core
       ind_rdata_q      <= '0;
       ind_done_q       <= 1'b0;
       hit_cnt_q        <= '0;
+      hit_seen_q       <= 1'b0;
       cache_valid_q    <= '0;
       cache_tag_q      <= '0;
       cache_data_q     <= '0;
@@ -184,8 +186,13 @@ module xspi_xip_core
     end else begin
       xip_resp_ready_q <= 1'b0;
 
-      if (xip_cache_hit && state_q == ST_IDLE) begin
-        hit_cnt_q <= hit_cnt_q + 8'd1;
+      // Count each XIP cache hit once per transaction (the request may stay valid for several cycles);
+      // the cycle that completes a cache-fill (miss) response is not a hit
+      if (!mem_win_req_i.valid) begin
+        hit_seen_q <= 1'b0;
+      end else if (xip_cache_hit && state_q == ST_IDLE && !hit_seen_q && !xip_resp_ready_q) begin
+        hit_seen_q <= 1'b1;
+        hit_cnt_q  <= hit_cnt_q + 8'd1;
       end
 
       // CSR Register Writes

@@ -119,7 +119,7 @@ module spi_core
   assign spi_sck_o    = sck_int_q;
   assign spi_cs_no    = (manual_cs || cs_active_q) ? ~cs_sel : {NUM_CS{1'b1}};
 
-  wire [5:0] msb_idx = bits_per_word - 6'd1;
+  wire [4:0] msb_idx = 5'(bits_per_word - 6'd1);
   wire       cur_tx_bit = lsb_first ? shreg_tx_q[0] : shreg_tx_q[msb_idx];
   assign spi_mosi_o = cur_tx_bit;
   assign spi_miso_o = cur_tx_bit;

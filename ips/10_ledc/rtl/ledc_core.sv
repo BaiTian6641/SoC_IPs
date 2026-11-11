@@ -240,11 +240,11 @@ module ledc_core
     csr_rsp_o.rdata = '0;
     if (reg_off >= 8'h40 && reg_off < 8'h60) begin
       int idx;
-      idx = int'((reg_off - 8'h40) >> 2);
+      idx = int'(8'(reg_off - 8'h40)) >> 2;
       if (idx < NUM_PWM_CH) csr_rsp_o.rdata = {ch_target_q[idx], ch_duty_q[idx]};
     end else if (reg_off >= 8'h60 && reg_off < 8'h80) begin
       int idx;
-      idx = int'((reg_off - 8'h60) >> 2);
+      idx = int'(8'(reg_off - 8'h60)) >> 2;
       if (idx < NUM_PWM_CH) csr_rsp_o.rdata = {16'd0, ch_step_q[idx]};
     end else begin
       unique case (reg_off)
@@ -306,14 +306,14 @@ module ledc_core
       if (csr_req_i.valid && csr_req_i.write) begin
         if (reg_off >= 8'h40 && reg_off < 8'h60) begin
           int idx;
-          idx = int'((reg_off - 8'h40) >> 2);
+          idx = int'(8'(reg_off - 8'h40)) >> 2;
           if (idx < NUM_PWM_CH) begin
             if (csr_req_i.wstrb[0] || csr_req_i.wstrb[1]) ch_duty_q[idx]   <= csr_req_i.wdata[15:0];
             if (csr_req_i.wstrb[2] || csr_req_i.wstrb[3]) ch_target_q[idx] <= csr_req_i.wdata[31:16];
           end
         end else if (reg_off >= 8'h60 && reg_off < 8'h80) begin
           int idx;
-          idx = int'((reg_off - 8'h60) >> 2);
+          idx = int'(8'(reg_off - 8'h60)) >> 2;
           if (idx < NUM_PWM_CH) ch_step_q[idx] <= csr_req_i.wdata[15:0];
         end else begin
           unique case (reg_off)

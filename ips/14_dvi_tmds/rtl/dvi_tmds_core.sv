@@ -190,8 +190,7 @@ module dvi_tmds_core
         3'd7: begin pix_r = 8'h18; pix_g = 8'h18; pix_b = 8'h18; end
       endcase
     end else if (rgb565) begin
-      logic [15:0] p16;
-      p16   = rgb565_hi_q ? fifo_rdata[31:16] : fifo_rdata[15:0];
+      automatic logic [15:0] p16 = rgb565_hi_q ? fifo_rdata[31:16] : fifo_rdata[15:0];
       pix_r = {p16[15:11], p16[15:13]};
       pix_g = {p16[10:5],  p16[10:9]};
       pix_b = {p16[4:0],   p16[4:2]};

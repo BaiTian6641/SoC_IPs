@@ -33,7 +33,7 @@ module async_fifo #(
   logic [ADDR_W:0] wgray_rsync1_q, wgray_rsync2_q;
 
   // Write pointer & full logic
-  assign wbin_d  = wbin_q + ((wpush_i && !wfull_o) ? 1'b1 : 1'b0);
+  assign wbin_d  = wbin_q + (ADDR_W+1)'((wpush_i && !wfull_o) ? 1'b1 : 1'b0);
   assign wgray_d = (wbin_d >> 1) ^ wbin_d;
 
   always_ff @(posedge wclk_i or negedge wrst_ni) begin
@@ -56,7 +56,7 @@ module async_fifo #(
   end
 
   // Read pointer & empty logic
-  assign rbin_d  = rbin_q + ((rpop_i && !rempty_o) ? 1'b1 : 1'b0);
+  assign rbin_d  = rbin_q + (ADDR_W+1)'((rpop_i && !rempty_o) ? 1'b1 : 1'b0);
   assign rgray_d = (rbin_d >> 1) ^ rbin_d;
   assign rdata_o = mem[rbin_q[ADDR_W-1:0]];
 

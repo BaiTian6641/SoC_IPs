@@ -41,9 +41,7 @@ module crc_engine #(
       lfsr_d = INIT_VAL;
     end else if (byte_en_i) begin
       for (int i = 0; i < 8; i++) begin
-        logic b;
-        b = REF_IN ? byte_i[i] : byte_i[7 - i];
-        lfsr_d = step_bit(lfsr_d, b);
+        lfsr_d = step_bit(lfsr_d, REF_IN ? byte_i[i] : byte_i[7 - i]);
       end
     end else if (bit_en_i) begin
       lfsr_d = step_bit(lfsr_d, bit_i);

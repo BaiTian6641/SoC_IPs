@@ -99,7 +99,7 @@ module hyperram_ctrl_core
       is_rd,
       reg_space,
       lin_bst,
-      halfword_addr[30:3], // Row & upper column [44:16] (29 bits: [44:16])
+      1'b0, halfword_addr[30:3], // Row & upper column CA[44:16] (29 bits, MSB zero-extended)
       13'd0,
       halfword_addr[2:0]
     };

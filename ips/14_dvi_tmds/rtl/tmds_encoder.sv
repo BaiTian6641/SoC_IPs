@@ -21,6 +21,7 @@ module tmds_encoder (
     for (int i = 0; i < 8; i++) n1_d = n1_d + {3'd0, din_i[i]};
     use_xnor = (n1_d > 4'd4) || ((n1_d == 4'd4) && (din_i[0] == 1'b0));
 
+    q_m    = '0;
     q_m[0] = din_i[0];
     for (int i = 1; i < 8; i++) begin
       q_m[i] = use_xnor ? ~(q_m[i-1] ^ din_i[i]) : (q_m[i-1] ^ din_i[i]);

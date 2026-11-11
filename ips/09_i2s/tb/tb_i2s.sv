@@ -37,7 +37,9 @@ module tb_i2s;
     do_wb_write(wb_m, wb_s, 32'h00, 32'h0000_0917); // tx_en, rx_en, mclk_en, LJ fmt, loopback
     repeat (140) @(posedge clk);
     do_wb_read (wb_m, wb_s, 32'h18, rd);
-    if (rd[15:0] !== 16'hBEEF) $fatal(1, "WB I2S loopback sample mismatch: %h", rd);
+    if (rd !== 32'h0000_BEEF) $fatal(1, "WB I2S loopback sample 0 mismatch: %h", rd);
+    do_wb_read (wb_m, wb_s, 32'h18, rd);
+    if (rd !== 32'h0000_CAFE) $fatal(1, "WB I2S loopback sample 1 mismatch: %h", rd);
 
     do_axi_write(axi_m, axi_s, 32'h04, 32'h0002_0004);
     do_axi_read (axi_m, axi_s, 32'h04, rd);

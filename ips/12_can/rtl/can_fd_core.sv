@@ -150,7 +150,7 @@ module can_fd_core
   } can_state_e;
 
   can_state_e  state_q;
-  logic [39:0] hdr_bits_q;
+  logic [40:0] hdr_bits_q;
   logic [5:0]  hdr_rem_q, hdr_idx_q;
   logic [9:0]  data_bits_rem_q, data_bit_pos_q;
   logic [20:0] crc_reg_q, tx_crc_shift_q;
@@ -271,21 +271,21 @@ module can_fd_core
           logic [6:0] new_bytes;
           new_dlc   = csr_req_i.wdata[3:0];
           new_bytes = dlc_to_bytes(new_dlc, tx_fdf);
-          // Pack SOF(0) + Arbitration + Control into hdr_bits_q MSB-aligned [39:0]
+          // Pack SOF(0) + Arbitration + Control into hdr_bits_q MSB-aligned [40:0]
           if (!tx_ide) begin
             if (!tx_fdf) begin
               // 19 bits: SOF(0), ID[10:0], RTR, IDE(0), r0(0), DLC[3:0]
-              hdr_bits_q <= {1'b0, tx_hdr_q[10:0], csr_req_i.wdata[4], 1'b0, 1'b0, new_dlc, 21'd0};
+              hdr_bits_q <= {1'b0, tx_hdr_q[10:0], csr_req_i.wdata[4], 1'b0, 1'b0, new_dlc, 22'd0};
               hdr_rem_q  <= 6'd19;
             end else begin
               // 21 bits: SOF(0), ID[10:0], r1(0), IDE(0), FDF(1), r0(0), BRS, ESI(0), DLC[3:0] -> 22 bits
-              hdr_bits_q <= {1'b0, tx_hdr_q[10:0], 1'b0, 1'b0, 1'b1, 1'b0, tx_brs, (tec_q > 8'd127), new_dlc, 18'd0};
+              hdr_bits_q <= {1'b0, tx_hdr_q[10:0], 1'b0, 1'b0, 1'b1, 1'b0, tx_brs, (tec_q > 8'd127), new_dlc, 19'd0};
               hdr_rem_q  <= 6'd22;
             end
           end else begin
             // Extended 29-bit ID frame: SOF(0), ID[28:18], SRR(1), IDE(1), ID[17:0], RTR/r1, FDF, ...
             if (!tx_fdf) begin
-              hdr_bits_q <= {1'b0, tx_hdr_q[28:18], 1'b1, 1'b1, tx_hdr_q[17:0], csr_req_i.wdata[4], 2'b00, new_dlc, 1'b0};
+              hdr_bits_q <= {1'b0, tx_hdr_q[28:18], 1'b1, 1'b1, tx_hdr_q[17:0], csr_req_i.wdata[4], 2'b00, new_dlc, 2'b00};
               hdr_rem_q  <= 6'd39;
             end else begin
               hdr_bits_q <= {1'b0, tx_hdr_q[28:18], 1'b1, 1'b1, tx_hdr_q[17:0], 1'b0, 1'b1, 1'b0, tx_brs, (tec_q > 8'd127), new_dlc};
@@ -324,9 +324,9 @@ module can_fd_core
             logic nxt_b;
             unique case (state_q)
               CAN_TX_HDR: begin
-                nxt_b      = hdr_bits_q[39];
+                nxt_b      = hdr_bits_q[40];
                 tx_pin_q   <= nxt_b;
-                hdr_bits_q <= {hdr_bits_q[38:0], 1'b0};
+                hdr_bits_q <= {hdr_bits_q[39:0], 1'b0};
                 crc_reg_q  <= step_can_crc(crc_reg_q, nxt_b, crc_width_comb);
                 if (hdr_rem_q <= 6'd1) begin
                   if (data_bits_rem_q != 10'd0) begin

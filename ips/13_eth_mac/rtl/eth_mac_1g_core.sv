@@ -75,6 +75,8 @@ module eth_mac_1g_core
   assign phy_tx_er_o   = 1'b0;
 
   // Packet Elastic Buffers
+  localparam int unsigned FW_W = $clog2(MAX_FRAME_WORDS); // packet-buffer word index width
+
   logic [31:0] tx_pkt_mem [0:MAX_FRAME_WORDS-1];
   logic [31:0] rx_pkt_mem [0:MAX_FRAME_WORDS-1];
 
@@ -224,6 +226,29 @@ module eth_mac_1g_core
 
   wire is_mii = (speed != 2'd2);
 
+  // RX byte assembly (combinational view of the incoming PHY data). The CRC engine is driven
+  // combinationally from this view so that its output includes the current byte in the NEXT cycle,
+  // i.e. the end-of-frame FCS check sees all bytes (including the last FCS byte).
+  logic       rx_byte_rdy;
+  logic [7:0] rx_full_byte;
+  always_comb begin
+    rx_byte_rdy  = 1'b0;
+    rx_full_byte = 8'd0;
+    if (rx_en && rx_dv_mux) begin
+      if (!is_mii) begin
+        rx_byte_rdy  = 1'b1;
+        rx_full_byte = rxd_mux;
+      end else if (rx_nib_hi_q) begin
+        rx_byte_rdy  = 1'b1;
+        rx_full_byte = {rxd_mux[3:0], rx_low_nib_q};
+      end
+    end
+  end
+
+  assign rx_crc_clr  = rx_byte_rdy && (rx_st_q == RX_WAIT_SFD) && (rx_full_byte == 8'hD5);
+  assign rx_crc_en   = rx_byte_rdy && (rx_st_q == RX_DATA_BYTES);
+  assign rx_crc_byte = rx_full_byte;
+
   // RX Byte Assembly & SFD/MAC/FCS Check
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -237,13 +262,8 @@ module eth_mac_1g_core
       rx_frame_valid_q    <= 1'b0;
       rx_crc_ok_q         <= 1'b0;
       rx_writeback_pend_q <= 1'b0;
-      rx_crc_clr          <= 1'b1;
-      rx_crc_en           <= 1'b0;
-      rx_crc_byte         <= '0;
       rx_crc_err_ev       <= 1'b0;
     end else begin
-      rx_crc_clr    <= 1'b0;
-      rx_crc_en     <= 1'b0;
       rx_crc_err_ev <= 1'b0;
 
       if (rx_arm) begin
@@ -257,43 +277,31 @@ module eth_mac_1g_core
       if (!rx_en) begin
         rx_st_q <= RX_WAIT_SFD;
       end else if (rx_dv_mux) begin
-        logic       byte_rdy;
-        logic [7:0] full_byte;
-        if (!is_mii) begin
-          byte_rdy  = 1'b1;
-          full_byte = rxd_mux;
-        end else begin
+        if (is_mii) begin
           if (!rx_nib_hi_q) begin
             rx_low_nib_q <= rxd_mux[3:0];
             rx_nib_hi_q  <= 1'b1;
-            byte_rdy     = 1'b0;
-            full_byte    = 8'd0;
           end else begin
-            rx_nib_hi_q <= 1'b0;
-            byte_rdy    = 1'b1;
-            full_byte   = {rxd_mux[3:0], rx_low_nib_q};
+            rx_nib_hi_q  <= 1'b0;
           end
         end
 
-        if (byte_rdy) begin
+        if (rx_byte_rdy) begin
           if (rx_st_q == RX_WAIT_SFD) begin
-            if (full_byte == 8'hD5) begin
+            if (rx_full_byte == 8'hD5) begin
               rx_st_q       <= RX_DATA_BYTES;
               rx_byte_cnt_q <= '0;
-              rx_crc_clr    <= 1'b1;
             end
           end else begin
             int w_i, b_i;
             w_i = int'(rx_byte_cnt_q[10:2]);
             b_i = int'(rx_byte_cnt_q[1:0]);
             if (w_i < MAX_FRAME_WORDS) begin
-              rx_pkt_mem[w_i][b_i*8 +: 8] <= full_byte;
+              rx_pkt_mem[w_i][b_i*8 +: 8] <= rx_full_byte;
             end
             if (rx_byte_cnt_q < 11'd6) begin
-              rx_dst_mac_q <= {rx_dst_mac_q[39:0], full_byte};
+              rx_dst_mac_q <= {rx_dst_mac_q[39:0], rx_full_byte};
             end
-            rx_crc_en     <= 1'b1;
-            rx_crc_byte   <= full_byte;
             rx_byte_cnt_q <= rx_byte_cnt_q + 11'd1;
           end
         end
@@ -324,6 +332,13 @@ module eth_mac_1g_core
     end
   end
 
+  // TX CRC engine is driven combinationally from the byte being launched onto the PHY pins, so
+  // tx_crc_val already includes that byte in the following cycle (needed for seamless FCS append).
+  logic [7:0] tx_cur_dbyte;
+  assign tx_cur_dbyte = tx_pkt_mem[tx_idx_q[FW_W+1:2]][tx_idx_q[1:0]*8 +: 8];
+  assign tx_crc_en    = (mstate_q == MAC_TX_PAYLOAD) && (!is_mii || !mii_hi_nib_q);
+  assign tx_crc_byte  = tx_cur_dbyte;
+
   // Main TX & DMA State Machine
   always_comb begin
     dma_req_o            = '0;
@@ -341,7 +356,7 @@ module eth_mac_1g_core
       dma_req_o.valid = 1'b1;
       dma_req_o.write = 1'b1;
       dma_req_o.addr  = rx_dma_adr_q + {21'd0, dma_word_idx_q, 2'b00};
-      dma_req_o.wdata = rx_pkt_mem[dma_word_idx_q];
+      dma_req_o.wdata = rx_pkt_mem[dma_word_idx_q[FW_W-1:0]];
       dma_req_o.wstrb = 4'hF;
     end
   end
@@ -357,14 +372,11 @@ module eth_mac_1g_core
       tx_en_pin_q     <= 1'b0;
       txd_pin_q       <= '0;
       tx_crc_clr      <= 1'b1;
-      tx_crc_en       <= 1'b0;
-      tx_crc_byte     <= '0;
       latched_fcs_q   <= '0;
       tx_done_ev      <= 1'b0;
       rx_done_ev      <= 1'b0;
     end else begin
       tx_crc_clr <= 1'b0;
-      tx_crc_en  <= 1'b0;
       tx_done_ev <= 1'b0;
       rx_done_ev <= 1'b0;
 
@@ -378,11 +390,11 @@ module eth_mac_1g_core
             flen            = csr_req_i.wdata[10:0];
             tx_len_q        <= flen;
             dma_word_idx_q  <= '0;
-            dma_words_tot_q <= (flen + 11'd3) >> 2;
+            dma_words_tot_q <= 9'((flen + 11'd3) >> 2);
             mstate_q        <= MAC_TX_DMA_REQ;
           end else if (rx_writeback_pend_q) begin
             dma_word_idx_q  <= '0;
-            dma_words_tot_q <= (rx_latched_len_q + 11'd3) >> 2;
+            dma_words_tot_q <= 9'((rx_latched_len_q + 11'd3) >> 2);
             mstate_q        <= MAC_RX_DMA_REQ;
           end
         end
@@ -393,7 +405,7 @@ module eth_mac_1g_core
 
         MAC_TX_DMA_WAIT: begin
           if (dma_rsp_i.resp_valid) begin
-            tx_pkt_mem[dma_word_idx_q] <= dma_rsp_i.rdata;
+            tx_pkt_mem[dma_word_idx_q[FW_W-1:0]] <= dma_rsp_i.rdata;
             if (dma_word_idx_q + 9'd1 >= dma_words_tot_q) begin
               tx_idx_q     <= '0;
               mii_hi_nib_q <= 1'b0;
@@ -431,12 +443,10 @@ module eth_mac_1g_core
 
         MAC_TX_PAYLOAD: begin
           logic [7:0] dbyte;
-          dbyte = tx_pkt_mem[tx_idx_q[10:2]][tx_idx_q[1:0]*8 +: 8];
+          dbyte = tx_pkt_mem[tx_idx_q[FW_W+1:2]][tx_idx_q[1:0]*8 +: 8];
           tx_en_pin_q <= 1'b1;
           if (!is_mii) begin
             txd_pin_q   <= dbyte;
-            tx_crc_en   <= 1'b1;
-            tx_crc_byte <= dbyte;
             if (tx_idx_q + 11'd1 >= tx_len_q) begin
               tx_idx_q <= '0;
               mstate_q <= append_crc ? MAC_TX_FCS : MAC_TX_IFG;
@@ -445,8 +455,6 @@ module eth_mac_1g_core
             txd_pin_q <= {4'd0, mii_hi_nib_q ? dbyte[7:4] : dbyte[3:0]};
             if (!mii_hi_nib_q) begin
               mii_hi_nib_q <= 1'b1;
-              tx_crc_en    <= 1'b1;
-              tx_crc_byte  <= dbyte;
             end else begin
               mii_hi_nib_q <= 1'b0;
               if (tx_idx_q + 11'd1 >= tx_len_q) begin

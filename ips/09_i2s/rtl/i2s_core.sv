@@ -66,15 +66,30 @@ module i2s_core
   logic        rx_push, rx_pop, rx_full, rx_empty;
   logic [31:0] rx_wdata, rx_rdata;
 
+  // Flush a FIFO only when its channel is disabled (1 -> 0), so software can pre-load TX samples
+  // while the transceiver is still disabled.
+  logic tx_en_q, rx_en_q;
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      tx_en_q <= 1'b0;
+      rx_en_q <= 1'b0;
+    end else begin
+      tx_en_q <= tx_en;
+      rx_en_q <= rx_en;
+    end
+  end
+  wire tx_flush = tx_en_q && !tx_en;
+  wire rx_flush = rx_en_q && !rx_en;
+
   sync_fifo #(.DATA_W(32), .DEPTH(FIFO_DEPTH)) u_tx_fifo (
-    .clk_i(clk_i), .rst_ni(rst_ni), .clr_i(!tx_en && !rx_en),
+    .clk_i(clk_i), .rst_ni(rst_ni), .clr_i(tx_flush),
     .push_i(tx_push), .wdata_i(tx_wdata), .full_o(tx_full), .afull_o(),
     .pop_i(tx_pop), .rdata_o(tx_rdata), .empty_o(tx_empty), .aempty_o(),
     .level_o()
   );
 
   sync_fifo #(.DATA_W(32), .DEPTH(FIFO_DEPTH)) u_rx_fifo (
-    .clk_i(clk_i), .rst_ni(rst_ni), .clr_i(!tx_en && !rx_en),
+    .clk_i(clk_i), .rst_ni(rst_ni), .clr_i(rx_flush),
     .push_i(rx_push), .wdata_i(rx_wdata), .full_o(rx_full), .afull_o(),
     .pop_i(rx_pop), .rdata_o(rx_rdata), .empty_o(rx_empty), .aempty_o(),
     .level_o()
@@ -149,6 +164,7 @@ module i2s_core
   logic [5:0]  bit_idx_q;
   logic [31:0] tx_shreg_q, rx_shreg_q;
   logic        ws_q;
+  logic        run_q;   // Set on first BCLK falling edge after enable (frame alignment achieved)
   logic        tx_underrun_ev, rx_overrun_ev;
 
   assign i2s_ws_o = ws_q;
@@ -163,8 +179,9 @@ module i2s_core
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      slot_idx_q     <= '0;
-      bit_idx_q      <= '0;
+      slot_idx_q     <= 3'd1;   // Matches reset CTRL (stereo, 16-bit): first BCLK fall starts slot 0
+      bit_idx_q      <= 6'd15;
+      run_q          <= 1'b0;
       tx_shreg_q     <= '0;
       rx_shreg_q     <= '0;
       ws_q           <= 1'b0;
@@ -178,12 +195,16 @@ module i2s_core
       rx_overrun_ev  <= 1'b0;
 
       if (!tx_en && !rx_en) begin
-        slot_idx_q <= '0;
-        bit_idx_q  <= '0;
+        // Park the frame counters on the last bit of the last slot so that the first BCLK falling
+        // edge after enable loads the first TX word and begins slot 0 / bit 0.
+        slot_idx_q <= slots_m1;
+        bit_idx_q  <= slot_bits - 6'd1;
+        run_q      <= 1'b0;
         ws_q       <= 1'b0;
       end else begin
         // Falling edge updates WS and shifts/loads TX data
         if (bclk_fall) begin
+          run_q <= 1'b1;
           if (bit_idx_q + 6'd1 >= slot_bits) begin
             bit_idx_q  <= 6'd0;
             slot_idx_q <= (slot_idx_q >= slots_m1) ? 3'd0 : (slot_idx_q + 3'd1);
@@ -221,7 +242,7 @@ module i2s_core
         end
 
         // Rising edge samples RX SD
-        if (bclk_rise && rx_en) begin
+        if (bclk_rise && rx_en && run_q) begin
           logic [31:0] next_rx;
           next_rx    = {rx_shreg_q[30:0], sd_mux_in};
           rx_shreg_q <= next_rx;
@@ -231,7 +252,12 @@ module i2s_core
               rx_overrun_ev <= 1'b1;
             end else begin
               rx_push  <= 1'b1;
-              rx_wdata <= next_rx;
+              // Right-justify the received sample to the configured slot width
+              unique case (sres)
+                2'd0:    rx_wdata <= {16'd0, next_rx[15:0]};
+                2'd1:    rx_wdata <= {8'd0,  next_rx[23:0]};
+                default: rx_wdata <= next_rx;
+              endcase
             end
           end
         end
