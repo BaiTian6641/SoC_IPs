@@ -1,0 +1,22 @@
+-f filelists/peripherals_all.f
+tb/common/tb_bfm_pkg.sv
+tb/common/tb_sim_ram.sv
+tb/tb_interconnect_bridges.sv
+tb/tb_crossbars_smart_switch.sv
+tb/tb_soc_subsystem.sv
+ips/01_uart_usart/tb/tb_uart_usart.sv
+ips/02_spi/tb/tb_spi.sv
+ips/03_i2c_i3c/tb/tb_i2c_i3c.sv
+ips/04_xspi_xip/tb/tb_xspi_xip.sv
+ips/05_hyperram/tb/tb_hyperram_ctrl.sv
+ips/06_sdram_sram_nvsram/tb/tb_ext_mem_ctrl.sv
+ips/07_nvpsram/tb/tb_nvpsram_ctrl.sv
+ips/08_gpio/tb/tb_gpio.sv
+ips/09_i2s/tb/tb_i2s.sv
+ips/10_ledc/tb/tb_ledc.sv
+ips/11_jtag/tb/tb_jtag.sv
+ips/12_can/tb/tb_can.sv
+ips/13_eth_mac/tb/tb_eth_mac.sv
+ips/14_dvi_tmds/tb/tb_dvi_tmds.sv
+ips/15_dma_gdma/tb/tb_gdma.sv
+ips/16_gfx2d_dma/tb/tb_gfx2d_dma.sv

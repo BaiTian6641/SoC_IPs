@@ -1,0 +1,21 @@
+-f filelists/common.f
+interconnect/interfaces/wb_if.sv
+interconnect/interfaces/axi4_if.sv
+interconnect/interfaces/tl_if.sv
+interconnect/adapters/wb_to_csr.sv
+interconnect/adapters/axi_lite_to_csr.sv
+interconnect/adapters/tl_ul_to_csr.sv
+interconnect/adapters/mem_to_wb_master.sv
+interconnect/adapters/mem_to_axi4_master.sv
+interconnect/adapters/mem_to_tl_uh_master.sv
+interconnect/bridges/wb_to_axi4.sv
+interconnect/bridges/axi4_to_wb.sv
+interconnect/bridges/wb_to_tl.sv
+interconnect/bridges/tl_to_wb.sv
+interconnect/bridges/axi4_to_tl.sv
+interconnect/bridges/tl_to_axi4.sv
+interconnect/crossbars/wb_xbar.sv
+interconnect/crossbars/axi4_xbar.sv
+interconnect/crossbars/tl_xbar.sv
+interconnect/smart_switch/width_upsizer_downsizer.sv
+interconnect/smart_switch/smart_switch_interconnect.sv

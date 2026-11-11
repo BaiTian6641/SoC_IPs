@@ -1,0 +1,21 @@
+# Build / simulation outputs
+obj_dir/
+work/
+transcript
+*.vcd
+*.fst
+*.wlf
+*.log
+*.jou
+csrc/
+simv*
+xcelium.d/
+xrun.history
+ucli.key
+DVEfiles/
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
