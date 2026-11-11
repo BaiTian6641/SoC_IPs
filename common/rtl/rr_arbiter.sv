@@ -47,8 +47,7 @@ module rr_arbiter #(
       valid_o              = 1'b1;
     end else begin
       for (int offset = 0; offset < N; offset++) begin
-        int cand;
-        cand = (int'(rr_ptr_q) + offset) % N;
+        automatic int cand = (int'(rr_ptr_q) + offset) % N;
         if (!valid_o && qos_filtered_req[cand]) begin
           gnt_o[cand] = 1'b1;
           idx_o       = IDX_W'(cand);

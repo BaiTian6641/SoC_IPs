@@ -8,7 +8,7 @@ module tb_soc_subsystem;
   import bus_pkg::*;
   import tb_bfm_pkg::*;
 
-  logic clk = 1'b0;
+  logic clk; initial clk = 1'b0;
   logic rst_n = 1'b0;
   always #5 clk = ~clk;
 
@@ -79,67 +79,7 @@ module tb_soc_subsystem;
   );
 
 
-  task automatic do_wb_write(ref wb_m2s_t m, const ref wb_s2m_t s, input logic [31:0] addr, input logic [31:0] data);
-    @(posedge clk);
-    m = wb_req_wr(addr, data);
-    do @(posedge clk); while (!(s.ack || s.err));
-    m = '0;
-  endtask
-
-  task automatic do_wb_read(ref wb_m2s_t m, const ref wb_s2m_t s, input logic [31:0] addr, output logic [31:0] data);
-    @(posedge clk);
-    m = wb_req_rd(addr);
-    do @(posedge clk); while (!(s.ack || s.err));
-    data = s.dat;
-    m    = '0;
-  endtask
-
-  task automatic do_axi_write(ref axi4_m2s_t m, const ref axi4_s2m_t s, input logic [31:0] addr, input logic [31:0] data);
-    logic aw_done, w_done;
-    aw_done = 1'b0; w_done = 1'b0;
-    @(posedge clk);
-    m = axi_req_wr(addr, data);
-    while (!(aw_done && w_done)) begin
-      @(posedge clk);
-      if (s.awready) begin aw_done = 1'b1; m.awvalid = 1'b0; end
-      if (s.wready)  begin w_done  = 1'b1; m.wvalid  = 1'b0; end
-    end
-    while (!s.bvalid) @(posedge clk);
-    @(posedge clk);
-    m = '0;
-  endtask
-
-  task automatic do_axi_read(ref axi4_m2s_t m, const ref axi4_s2m_t s, input logic [31:0] addr, output logic [31:0] data);
-    @(posedge clk);
-    m = axi_req_rd(addr);
-    do @(posedge clk); while (!s.arready);
-    m.arvalid = 1'b0;
-    while (!s.rvalid) @(posedge clk);
-    data = s.rdata;
-    @(posedge clk);
-    m = '0;
-  endtask
-
-  task automatic do_tl_write(ref tl_m2s_t m, const ref tl_s2m_t s, input logic [31:0] addr, input logic [31:0] data);
-    @(posedge clk);
-    m = tl_req_put(addr, data);
-    do @(posedge clk); while (!s.a_ready);
-    m.a_valid = 1'b0;
-    while (!s.d_valid) @(posedge clk);
-    @(posedge clk);
-    m = '0;
-  endtask
-
-  task automatic do_tl_read(ref tl_m2s_t m, const ref tl_s2m_t s, input logic [31:0] addr, output logic [31:0] data);
-    @(posedge clk);
-    m = tl_req_get(addr);
-    do @(posedge clk); while (!s.a_ready);
-    m.a_valid = 1'b0;
-    while (!s.d_valid) @(posedge clk);
-    data = s.d_data;
-    @(posedge clk);
-    m = '0;
-  endtask
+  `include "tb_bfm_tasks.svh"
 
 
   initial begin
@@ -165,6 +105,12 @@ module tb_soc_subsystem;
 
     $display("[PASS] tb_soc_subsystem: Multi-protocol SoC GDMA + Smart Switch + GPIO + SRAM verified.");
     $finish;
+  end
+
+  // TB_WATCHDOG: abort instead of hanging forever on a protocol deadlock
+  initial begin
+    #(20_000_000);
+    $fatal(1, "[TIMEOUT] %m: simulation watchdog expired");
   end
 
 endmodule : tb_soc_subsystem

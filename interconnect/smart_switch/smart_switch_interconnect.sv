@@ -237,8 +237,7 @@ module smart_switch_interconnect
       m_hit_s[m]   = '0;
       m_dec_err[m] = 1'b0;
       if (m_norm_req[m].valid) begin
-        logic hit;
-        hit = 1'b0;
+        automatic logic hit = 1'b0;
         for (int s = 0; s < TOTAL_SLAVES; s++) begin
           if (!hit && ((m_norm_req[m].addr & addr_map_i[s].addr_mask) == (addr_map_i[s].base_addr & addr_map_i[s].addr_mask))) begin
             m_hit_s[m][s] = 1'b1;

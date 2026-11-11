@@ -5,7 +5,7 @@ VERILATOR ?= verilator
 VLOG      ?= vlog
 VSIM      ?= vsim
 
-VERILATOR_FLAGS := --binary -j 0 -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY --timing
+VERILATOR_FLAGS := --binary -j 0 -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY -Wno-TIMESCALEMOD --timing
 
 ALL_TBS := \
   tb_interconnect_bridges \
@@ -33,7 +33,7 @@ ALL_TBS := \
 all: lint sim
 
 lint:
-	$(VERILATOR) --lint-only -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -f filelists/peripherals_all.f --top-module smart_switch_interconnect
+	$(VERILATOR) --lint-only -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY -f filelists/peripherals_all.f --top-module smart_switch_interconnect
 
 sim: $(ALL_TBS)
 

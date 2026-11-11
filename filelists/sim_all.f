@@ -1,3 +1,4 @@
++incdir+tb/common
 -f filelists/peripherals_all.f
 tb/common/tb_bfm_pkg.sv
 tb/common/tb_sim_ram.sv
