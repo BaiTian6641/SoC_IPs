@@ -10,6 +10,7 @@ interface tl_if #(
   input logic clk_i,
   input logic rst_ni
 );
+  import bus_pkg::*;
 
   // Channel A (Request)
   logic                a_valid;
@@ -34,6 +35,36 @@ interface tl_if #(
   logic                d_denied;
   logic [DATA_W-1:0]   d_data;
   logic                d_corrupt;
+
+  function automatic tl_m2s_t to_m2s();
+    tl_m2s_t m;
+    m.a_valid   = a_valid;
+    m.a_opcode  = a_opcode;
+    m.a_param   = a_param;
+    m.a_size    = a_size;
+    m.a_source  = 8'(a_source);
+    m.a_address = 32'(a_address);
+    m.a_mask    = 4'(a_mask);
+    m.a_data    = 32'(a_data);
+    m.a_corrupt = a_corrupt;
+    m.d_ready   = d_ready;
+    return m;
+  endfunction
+
+  function automatic tl_s2m_t to_s2m();
+    tl_s2m_t s;
+    s.a_ready   = a_ready;
+    s.d_valid   = d_valid;
+    s.d_opcode  = d_opcode;
+    s.d_param   = d_param;
+    s.d_size    = d_size;
+    s.d_source  = 8'(d_source);
+    s.d_sink    = 4'(d_sink);
+    s.d_denied  = d_denied;
+    s.d_data    = 32'(d_data);
+    s.d_corrupt = d_corrupt;
+    return s;
+  endfunction
 
   modport host (
     output a_valid, a_opcode, a_param, a_size, a_source, a_address, a_mask, a_data, a_corrupt, d_ready,

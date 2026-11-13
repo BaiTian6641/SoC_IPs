@@ -1,6 +1,6 @@
 CAPI=2:
 name: "open:soc:sv_peripherals_interconnect_suite:1.0.0"
-description: "Complete 16-IP SystemVerilog Peripheral Library with Wishbone B4, AXI4, and TileLink Crossbars, Smart Switch & Bridges"
+description: "Complete 16-IP SystemVerilog Peripheral Library (incl. Chrom-ART 2D GPU) with Wishbone B4, AXI4, and TileLink Crossbars, Register Slices, Smart Switch & Bridges"
 
 filesets:
   rtl:
@@ -17,6 +17,9 @@ filesets:
       - interconnect/interfaces/wb_if.sv
       - interconnect/interfaces/axi4_if.sv
       - interconnect/interfaces/tl_if.sv
+      - interconnect/slices/wb_reg_slice.sv
+      - interconnect/slices/axi4_reg_slice.sv
+      - interconnect/slices/tl_reg_slice.sv
       - interconnect/adapters/wb_to_csr.sv
       - interconnect/adapters/axi_lite_to_csr.sv
       - interconnect/adapters/tl_ul_to_csr.sv
@@ -33,7 +36,93 @@ filesets:
       - interconnect/crossbars/axi4_xbar.sv
       - interconnect/crossbars/tl_xbar.sv
       - interconnect/smart_switch/width_upsizer_downsizer.sv
+      - interconnect/smart_switch/width_upsizer_32to64.sv
       - interconnect/smart_switch/smart_switch_interconnect.sv
+      - ips/01_uart_usart/rtl/uart_usart_core.sv
+      - ips/01_uart_usart/rtl/uart_usart_wb.sv
+      - ips/01_uart_usart/rtl/uart_usart_axi.sv
+      - ips/01_uart_usart/rtl/uart_usart_tl.sv
+      - ips/01_uart_usart/rtl/uart_usart_top.sv
+      - ips/02_spi/rtl/spi_core.sv
+      - ips/02_spi/rtl/spi_wb.sv
+      - ips/02_spi/rtl/spi_axi.sv
+      - ips/02_spi/rtl/spi_tl.sv
+      - ips/02_spi/rtl/spi_top.sv
+      - ips/03_i2c_i3c/rtl/i2c_i3c_core.sv
+      - ips/03_i2c_i3c/rtl/i2c_i3c_wb.sv
+      - ips/03_i2c_i3c/rtl/i2c_i3c_axi.sv
+      - ips/03_i2c_i3c/rtl/i2c_i3c_tl.sv
+      - ips/03_i2c_i3c/rtl/i2c_i3c_top.sv
+      - ips/04_xspi_xip/rtl/xspi_xip_core.sv
+      - ips/04_xspi_xip/rtl/xspi_xip_wb.sv
+      - ips/04_xspi_xip/rtl/xspi_xip_axi.sv
+      - ips/04_xspi_xip/rtl/xspi_xip_tl.sv
+      - ips/04_xspi_xip/rtl/xspi_xip_top.sv
+      - ips/05_hyperram/rtl/hyperram_ctrl_core.sv
+      - ips/05_hyperram/rtl/hyperram_ctrl_wb.sv
+      - ips/05_hyperram/rtl/hyperram_ctrl_axi.sv
+      - ips/05_hyperram/rtl/hyperram_ctrl_tl.sv
+      - ips/05_hyperram/rtl/hyperram_ctrl_top.sv
+      - ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_core.sv
+      - ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_wb.sv
+      - ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_axi.sv
+      - ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_tl.sv
+      - ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_top.sv
+      - ips/07_nvpsram/rtl/nvpsram_ctrl_core.sv
+      - ips/07_nvpsram/rtl/nvpsram_ctrl_wb.sv
+      - ips/07_nvpsram/rtl/nvpsram_ctrl_axi.sv
+      - ips/07_nvpsram/rtl/nvpsram_ctrl_tl.sv
+      - ips/07_nvpsram/rtl/nvpsram_ctrl_top.sv
+      - ips/08_gpio/rtl/gpio_core.sv
+      - ips/08_gpio/rtl/gpio_wb.sv
+      - ips/08_gpio/rtl/gpio_axi.sv
+      - ips/08_gpio/rtl/gpio_tl.sv
+      - ips/08_gpio/rtl/gpio_top.sv
+      - ips/09_i2s/rtl/i2s_core.sv
+      - ips/09_i2s/rtl/i2s_wb.sv
+      - ips/09_i2s/rtl/i2s_axi.sv
+      - ips/09_i2s/rtl/i2s_tl.sv
+      - ips/09_i2s/rtl/i2s_top.sv
+      - ips/10_ledc/rtl/ledc_core.sv
+      - ips/10_ledc/rtl/ledc_wb.sv
+      - ips/10_ledc/rtl/ledc_axi.sv
+      - ips/10_ledc/rtl/ledc_tl.sv
+      - ips/10_ledc/rtl/ledc_top.sv
+      - ips/11_jtag/rtl/jtag_tap_master_core.sv
+      - ips/11_jtag/rtl/jtag_wb.sv
+      - ips/11_jtag/rtl/jtag_axi.sv
+      - ips/11_jtag/rtl/jtag_tl.sv
+      - ips/11_jtag/rtl/jtag_top.sv
+      - ips/12_can/rtl/can_fd_core.sv
+      - ips/12_can/rtl/can_wb.sv
+      - ips/12_can/rtl/can_axi.sv
+      - ips/12_can/rtl/can_tl.sv
+      - ips/12_can/rtl/can_top.sv
+      - ips/13_eth_mac/rtl/eth_mac_1g_core.sv
+      - ips/13_eth_mac/rtl/eth_mac_wb.sv
+      - ips/13_eth_mac/rtl/eth_mac_axi.sv
+      - ips/13_eth_mac/rtl/eth_mac_tl.sv
+      - ips/13_eth_mac/rtl/eth_mac_top.sv
+      - ips/14_dvi_tmds/rtl/tmds_encoder.sv
+      - ips/14_dvi_tmds/rtl/dvi_tmds_core.sv
+      - ips/14_dvi_tmds/rtl/dvi_tmds_wb.sv
+      - ips/14_dvi_tmds/rtl/dvi_tmds_axi.sv
+      - ips/14_dvi_tmds/rtl/dvi_tmds_tl.sv
+      - ips/14_dvi_tmds/rtl/dvi_tmds_top.sv
+      - ips/15_dma_gdma/rtl/gdma_core.sv
+      - ips/15_dma_gdma/rtl/gdma_wb.sv
+      - ips/15_dma_gdma/rtl/gdma_axi.sv
+      - ips/15_dma_gdma/rtl/gdma_tl.sv
+      - ips/15_dma_gdma/rtl/gdma_top.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_pkg.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_clut_ram.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_pfc.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_blender.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_dma_core.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_dma_wb.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_dma_axi.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_dma_tl.sv
+      - ips/16_gfx2d_dma/rtl/gfx2d_dma_top.sv
     file_type: systemVerilogSource
 
 targets:

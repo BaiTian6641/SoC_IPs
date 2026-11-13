@@ -203,4 +203,65 @@ package bus_pkg;
     logic [31:0] addr_mask; // 1 bits indicate address bits compared against base_addr
   } addr_map_rule_t;
 
+  // -------------------------------------------------------------------------
+  // Protocol Address Calculation & Boundary Helpers
+  // -------------------------------------------------------------------------
+  function automatic logic [31:0] axi_next_addr(
+    input logic [31:0] addr,
+    input logic [2:0]  size,
+    input logic [1:0]  burst,
+    input logic [7:0]  len
+  );
+    logic [31:0] step, aligned, inc_addr, wrap_mask;
+    step     = 32'd1 << size;
+    aligned  = addr & ~(step - 32'd1);
+    inc_addr = aligned + step;
+    if (burst == AXI_BURST_FIXED) begin
+      return addr;
+    end else if (burst == AXI_BURST_WRAP) begin
+      wrap_mask = ((32'(len) + 32'd1) << size) - 32'd1;
+      return (addr & ~wrap_mask) | (inc_addr & wrap_mask);
+    end else begin
+      return inc_addr;
+    end
+  endfunction
+
+  function automatic logic axi_crosses_4kb(
+    input logic [31:0] addr,
+    input logic [7:0]  len,
+    input logic [2:0]  size,
+    input logic [1:0]  burst
+  );
+    logic [15:0] step_mask, start_off, end_off;
+    step_mask = (16'd1 << size) - 16'd1;
+    start_off = {4'd0, addr[11:0]} & ~step_mask;
+    end_off   = start_off + ({8'd0, len} << size);
+    return (burst == AXI_BURST_INCR) && (end_off >= 16'h1000);
+  endfunction
+
+  function automatic logic [31:0] wb_next_addr(
+    input logic [31:0] addr,
+    input logic [2:0]  cti,
+    input logic [1:0]  bte,
+    input logic [2:0]  size
+  );
+    logic [31:0] step, inc_addr, wrap_mask;
+    step     = 32'd1 << size;
+    inc_addr = addr + step;
+    if (cti == WB_CTI_CONST) begin
+      return addr;
+    end else if (cti == WB_CTI_INC) begin
+      unique case (bte)
+        2'b01:   wrap_mask = (32'd4  << size) - 32'd1; // 4-beat wrap
+        2'b10:   wrap_mask = (32'd8  << size) - 32'd1; // 8-beat wrap
+        2'b11:   wrap_mask = (32'd16 << size) - 32'd1; // 16-beat wrap
+        default: wrap_mask = '0;
+      endcase
+      if (bte == 2'b00) return inc_addr;
+      else              return (addr & ~wrap_mask) | (inc_addr & wrap_mask);
+    end else begin
+      return inc_addr;
+    end
+  endfunction
+
 endpackage : bus_pkg

@@ -7,6 +7,7 @@ module mem_to_tl_uh_master
 (
   input  logic     clk_i,
   input  logic     rst_ni,
+  input  logic     abort_i = 1'b0,
 
   input  mem_req_t mem_req_i,
   output mem_rsp_t mem_rsp_o,
@@ -88,6 +89,9 @@ module mem_to_tl_uh_master
       size_q      <= '0;
       id_q        <= '0;
       err_acc_q   <= 1'b0;
+    end else if (abort_i) begin
+      state_q   <= ST_IDLE;
+      err_acc_q <= 1'b0;
     end else begin
       unique case (state_q)
         ST_IDLE: begin

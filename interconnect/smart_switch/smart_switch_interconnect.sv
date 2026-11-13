@@ -28,6 +28,7 @@ module smart_switch_interconnect
   parameter int unsigned N_TL_SLAVES     = 2,
 
   parameter int unsigned TIMEOUT_CYCLES  = 1024,
+  parameter bit          PIPE_STAGE      = 1'b0,
 
   localparam int unsigned TOTAL_MASTERS  = N_WB_MASTERS + N_AXI_MASTERS + N_TL_MASTERS,
   localparam int unsigned TOTAL_SLAVES   = N_WB_SLAVES  + N_AXI_SLAVES  + N_TL_SLAVES
@@ -69,16 +70,66 @@ module smart_switch_interconnect
 
   localparam int unsigned M_IDX_W = (TOTAL_MASTERS <= 1) ? 1 : $clog2(TOTAL_MASTERS);
 
+  // Optional pipeline register slices on all master & slave ports
+  wb_m2s_t   [N_WB_MASTERS-1:0]  wb_m_s;
+  wb_s2m_t   [N_WB_MASTERS-1:0]  wb_m_m;
+  axi4_m2s_t [N_AXI_MASTERS-1:0] axi_m_s;
+  axi4_s2m_t [N_AXI_MASTERS-1:0] axi_m_m;
+  tl_m2s_t   [N_TL_MASTERS-1:0]  tl_m_s;
+  tl_s2m_t   [N_TL_MASTERS-1:0]  tl_m_m;
+
+  wb_m2s_t   [N_WB_SLAVES-1:0]   wb_s_m;
+  wb_s2m_t   [N_WB_SLAVES-1:0]   wb_s_s;
+  axi4_m2s_t [N_AXI_SLAVES-1:0]  axi_s_m;
+  axi4_s2m_t [N_AXI_SLAVES-1:0]  axi_s_s;
+  tl_m2s_t   [N_TL_SLAVES-1:0]   tl_s_m;
+  tl_s2m_t   [N_TL_SLAVES-1:0]   tl_s_s;
+
+  for (genvar i = 0; i < N_WB_MASTERS; i++) begin : gen_wb_m_slice
+    wb_reg_slice #(.BYPASS(!PIPE_STAGE)) u_s (
+      .clk_i(clk_i), .rst_ni(rst_ni), .s_wb_i(wb_m_i[i]), .s_wb_o(wb_m_o[i]), .m_wb_o(wb_m_s[i]), .m_wb_i(wb_m_m[i])
+    );
+  end
+  for (genvar i = 0; i < N_AXI_MASTERS; i++) begin : gen_axi_m_slice
+    axi4_reg_slice #(.BYPASS(!PIPE_STAGE)) u_s (
+      .clk_i(clk_i), .rst_ni(rst_ni), .s_axi_i(axi_m_i[i]), .s_axi_o(axi_m_o[i]), .m_axi_o(axi_m_s[i]), .m_axi_i(axi_m_m[i])
+    );
+  end
+  for (genvar i = 0; i < N_TL_MASTERS; i++) begin : gen_tl_m_slice
+    tl_reg_slice #(.BYPASS(!PIPE_STAGE)) u_s (
+      .clk_i(clk_i), .rst_ni(rst_ni), .s_tl_i(tl_m_i[i]), .s_tl_o(tl_m_o[i]), .m_tl_o(tl_m_s[i]), .m_tl_i(tl_m_m[i])
+    );
+  end
+
+  for (genvar s = 0; s < N_WB_SLAVES; s++) begin : gen_wb_s_slice
+    wb_reg_slice #(.BYPASS(!PIPE_STAGE)) u_s (
+      .clk_i(clk_i), .rst_ni(rst_ni), .s_wb_i(wb_s_m[s]), .s_wb_o(wb_s_s[s]), .m_wb_o(wb_s_o[s]), .m_wb_i(wb_s_i[s])
+    );
+  end
+  for (genvar s = 0; s < N_AXI_SLAVES; s++) begin : gen_axi_s_slice
+    axi4_reg_slice #(.BYPASS(!PIPE_STAGE)) u_s (
+      .clk_i(clk_i), .rst_ni(rst_ni), .s_axi_i(axi_s_m[s]), .s_axi_o(axi_s_s[s]), .m_axi_o(axi_s_o[s]), .m_axi_i(axi_s_i[s])
+    );
+  end
+  for (genvar s = 0; s < N_TL_SLAVES; s++) begin : gen_tl_s_slice
+    tl_reg_slice #(.BYPASS(!PIPE_STAGE)) u_s (
+      .clk_i(clk_i), .rst_ni(rst_ni), .s_tl_i(tl_s_m[s]), .s_tl_o(tl_s_s[s]), .m_tl_o(tl_s_o[s]), .m_tl_i(tl_s_i[s])
+    );
+  end
+
   // Normalize all heterogeneous masters into canonical internal CSR/Beat channels
-  csr_req_t [TOTAL_MASTERS-1:0] m_norm_req;
-  csr_rsp_t [TOTAL_MASTERS-1:0] m_norm_rsp;
+  csr_req_t [TOTAL_MASTERS-1:0]  m_norm_req;
+  csr_rsp_t [TOTAL_MASTERS-1:0]  m_norm_rsp;
+  logic     [TOTAL_MASTERS-1:0][3:0] eff_qos;
+  logic     [TOTAL_SLAVES-1:0]   s_timeout;
 
   for (genvar i = 0; i < N_WB_MASTERS; i++) begin : gen_norm_wb_m
+    assign eff_qos[i] = master_qos_i[i];
     wb_to_csr u_wb_m (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
-      .wb_i      (wb_m_i[i]),
-      .wb_o      (wb_m_o[i]),
+      .wb_i      (wb_m_s[i]),
+      .wb_o      (wb_m_m[i]),
       .csr_req_o (m_norm_req[i]),
       .csr_rsp_i (m_norm_rsp[i])
     );
@@ -86,11 +137,13 @@ module smart_switch_interconnect
 
   for (genvar i = 0; i < N_AXI_MASTERS; i++) begin : gen_norm_axi_m
     localparam int IDX = N_WB_MASTERS + i;
+    wire [3:0] dyn_qos = axi_m_s[i].awvalid ? axi_m_s[i].awqos : axi_m_s[i].arqos;
+    assign eff_qos[IDX] = (dyn_qos > master_qos_i[IDX]) ? dyn_qos : master_qos_i[IDX];
     axi_lite_to_csr u_axi_m (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
-      .axi_i     (axi_m_i[i]),
-      .axi_o     (axi_m_o[i]),
+      .axi_i     (axi_m_s[i]),
+      .axi_o     (axi_m_m[i]),
       .csr_req_o (m_norm_req[IDX]),
       .csr_rsp_i (m_norm_rsp[IDX])
     );
@@ -98,11 +151,12 @@ module smart_switch_interconnect
 
   for (genvar i = 0; i < N_TL_MASTERS; i++) begin : gen_norm_tl_m
     localparam int IDX = N_WB_MASTERS + N_AXI_MASTERS + i;
+    assign eff_qos[IDX] = master_qos_i[IDX];
     tl_ul_to_csr u_tl_m (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
-      .tl_i      (tl_m_i[i]),
-      .tl_o      (tl_m_o[i]),
+      .tl_i      (tl_m_s[i]),
+      .tl_o      (tl_m_m[i]),
       .csr_req_o (m_norm_req[IDX]),
       .csr_rsp_i (m_norm_rsp[IDX])
     );
@@ -136,6 +190,7 @@ module smart_switch_interconnect
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) wait_q <= 1'b0;
+      else if (s_timeout[s]) wait_q <= 1'b0;
       else if (mreq.valid && mrsp.req_ready && !mrsp.resp_valid) wait_q <= 1'b1;
       else if (mrsp.resp_valid) wait_q <= 1'b0;
     end
@@ -143,10 +198,11 @@ module smart_switch_interconnect
     mem_to_wb_master u_wb_s (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
+      .abort_i   (s_timeout[s]),
       .mem_req_i (mreq),
       .mem_rsp_o (mrsp),
-      .wb_o      (wb_s_o[s]),
-      .wb_i      (wb_s_i[s])
+      .wb_o      (wb_s_m[s]),
+      .wb_i      (wb_s_s[s])
     );
   end
 
@@ -175,6 +231,7 @@ module smart_switch_interconnect
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) wait_q <= 1'b0;
+      else if (s_timeout[SIDX]) wait_q <= 1'b0;
       else if (mreq.valid && mrsp.req_ready && !mrsp.resp_valid) wait_q <= 1'b1;
       else if (mrsp.resp_valid) wait_q <= 1'b0;
     end
@@ -182,10 +239,11 @@ module smart_switch_interconnect
     mem_to_axi4_master u_axi_s (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
+      .abort_i   (s_timeout[SIDX]),
       .mem_req_i (mreq),
       .mem_rsp_o (mrsp),
-      .axi_o     (axi_s_o[s]),
-      .axi_i     (axi_s_i[s])
+      .axi_o     (axi_s_m[s]),
+      .axi_i     (axi_s_s[s])
     );
   end
 
@@ -214,6 +272,7 @@ module smart_switch_interconnect
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) wait_q <= 1'b0;
+      else if (s_timeout[SIDX]) wait_q <= 1'b0;
       else if (mreq.valid && mrsp.req_ready && !mrsp.resp_valid) wait_q <= 1'b1;
       else if (mrsp.resp_valid) wait_q <= 1'b0;
     end
@@ -221,10 +280,11 @@ module smart_switch_interconnect
     mem_to_tl_uh_master u_tl_s (
       .clk_i     (clk_i),
       .rst_ni    (rst_ni),
+      .abort_i   (s_timeout[SIDX]),
       .mem_req_i (mreq),
       .mem_rsp_o (mrsp),
-      .tl_o      (tl_s_o[s]),
-      .tl_i      (tl_s_i[s])
+      .tl_o      (tl_s_m[s]),
+      .tl_i      (tl_s_s[s])
     );
   end
 
@@ -254,7 +314,6 @@ module smart_switch_interconnect
   logic [TOTAL_SLAVES-1:0]                    s_arb_vld;
   logic [TOTAL_SLAVES-1:0]                    s_locked_q;
   logic [TOTAL_SLAVES-1:0][15:0]              s_wdog_q;
-  logic [TOTAL_SLAVES-1:0]                    s_timeout;
 
   for (genvar s = 0; s < TOTAL_SLAVES; s++) begin : gen_smart_arb
     for (genvar m = 0; m < TOTAL_MASTERS; m++) begin : gen_m_to_s
@@ -267,7 +326,7 @@ module smart_switch_interconnect
       .clk_i   (clk_i),
       .rst_ni  (rst_ni),
       .req_i   (s_arb_req[s]),
-      .qos_i   (master_qos_i),
+      .qos_i   (eff_qos),
       .lock_i  (s_locked_q[s]),
       .ack_i   (s_norm_rsp[s].ready || s_timeout[s]),
       .gnt_o   (s_arb_gnt[s]),

@@ -38,6 +38,16 @@ interface wb_if #(
     return m;
   endfunction
 
+  function automatic wb_s2m_t to_s2m();
+    wb_s2m_t s;
+    s.ack   = ack;
+    s.stall = stall;
+    s.err   = err;
+    s.rty   = rty;
+    s.dat   = 32'(dat_s2m);
+    return s;
+  endfunction
+
   modport master (
     output cyc, stb, we, adr, dat_m2s, sel, cti, bte,
     input  ack, stall, err, rty, dat_s2m

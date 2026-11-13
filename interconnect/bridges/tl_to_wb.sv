@@ -39,7 +39,7 @@ module tl_to_wb
   assign mem_req.size       = 3'd2;
   assign mem_req.burst_wrap = 1'b0;
   assign mem_req.last       = 1'b1;
-  assign mem_req.id         = 4'd0;
+  assign mem_req.id         = s_tl_i.a_source[3:0];
   assign mem_req.qos        = 4'd0;
   assign mem_req.resp_ready = 1'b1;
 

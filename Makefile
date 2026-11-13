@@ -28,12 +28,50 @@ ALL_TBS := \
   tb_gdma \
   tb_gfx2d_dma
 
+LINT_FLAGS := --lint-only -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY
+
+LINT_TOPS := \
+  wb_xbar \
+  axi4_xbar \
+  tl_xbar \
+  smart_switch_interconnect \
+  width_upsizer_downsizer \
+  width_upsizer_32to64 \
+  wb_reg_slice \
+  axi4_reg_slice \
+  tl_reg_slice \
+  wb_to_axi4 \
+  axi4_to_wb \
+  wb_to_tl \
+  tl_to_wb \
+  axi4_to_tl \
+  tl_to_axi4 \
+  uart_usart_top \
+  spi_top \
+  i2c_i3c_top \
+  xspi_xip_top \
+  hyperram_ctrl_top \
+  ext_mem_ctrl_top \
+  nvpsram_ctrl_top \
+  gpio_top \
+  i2s_top \
+  ledc_top \
+  jtag_top \
+  can_top \
+  eth_mac_top \
+  dvi_tmds_top \
+  gdma_top \
+  gfx2d_dma_top
+
 .PHONY: all lint sim clean $(ALL_TBS)
 
 all: lint sim
 
 lint:
-	$(VERILATOR) --lint-only -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY -f filelists/peripherals_all.f --top-module smart_switch_interconnect
+	@for top in $(LINT_TOPS); do \
+	  echo "=== Linting $$top ==="; \
+	  $(VERILATOR) $(LINT_FLAGS) -f filelists/peripherals_all.f --top-module $$top || exit 1; \
+	done
 
 sim: $(ALL_TBS)
 

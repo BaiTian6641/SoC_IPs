@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // axi4_xbar.sv - MxN Parameterized AXI4 Crossbar Interconnect
 // Features: Separate Write (AW/W/B) and Read (AR/R) Switch Planes, Burst-Locked W routing,
-//           QoS-aware Round-Robin Arbitration, and Built-in DECERR Slave Responder.
+//           Optional Pipeline Register Slices, QoS/Aging Arbitration, 4KB Boundary Check,
+//           and Built-in DECERR Slave Responder.
 
 module axi4_xbar
   import bus_pkg::*;
 #(
   parameter int unsigned NUM_MASTERS = 4,
   parameter int unsigned NUM_SLAVES  = 8,
+  parameter bit          PIPE_MASTER = 1'b0,
+  parameter bit          PIPE_SLAVE  = 1'b0,
   localparam int unsigned M_IDX_W    = (NUM_MASTERS <= 1) ? 1 : $clog2(NUM_MASTERS),
   localparam int unsigned S_IDX_W    = $clog2(NUM_SLAVES + 1) // +1 for DECERR target
 ) (
@@ -25,10 +28,44 @@ module axi4_xbar
 
   localparam int unsigned ERR_SLAVE = NUM_SLAVES;
 
-  function automatic logic [S_IDX_W-1:0] decode_addr(
+  // Optional master and slave register slices
+  axi4_m2s_t [NUM_MASTERS-1:0] m_s;
+  axi4_s2m_t [NUM_MASTERS-1:0] m_m;
+  axi4_m2s_t [NUM_SLAVES-1:0]  s_m;
+  axi4_s2m_t [NUM_SLAVES-1:0]  s_s;
+
+  for (genvar m = 0; m < NUM_MASTERS; m++) begin : gen_m_slice
+    axi4_reg_slice #(.BYPASS(!PIPE_MASTER)) u_m_slice (
+      .clk_i   (clk_i),
+      .rst_ni  (rst_ni),
+      .s_axi_i (m_axi_i[m]),
+      .s_axi_o (m_axi_o[m]),
+      .m_axi_o (m_s[m]),
+      .m_axi_i (m_m[m])
+    );
+  end
+
+  for (genvar s = 0; s < NUM_SLAVES; s++) begin : gen_s_slice
+    axi4_reg_slice #(.BYPASS(!PIPE_SLAVE)) u_s_slice (
+      .clk_i   (clk_i),
+      .rst_ni  (rst_ni),
+      .s_axi_i (s_m[s]),
+      .s_axi_o (s_s[s]),
+      .m_axi_o (s_axi_o[s]),
+      .m_axi_i (s_axi_i[s])
+    );
+  end
+
+  function automatic logic [S_IDX_W-1:0] decode_burst(
     input logic [31:0]                     addr,
+    input logic [7:0]                      len,
+    input logic [2:0]                      size,
+    input logic [1:0]                      burst,
     input addr_map_rule_t [NUM_SLAVES-1:0] map_rules
   );
+    if (axi_crosses_4kb(addr, len, size, burst)) begin
+      return S_IDX_W'(ERR_SLAVE);
+    end
     for (int s = 0; s < NUM_SLAVES; s++) begin
       if ((addr & map_rules[s].addr_mask) == (map_rules[s].base_addr & map_rules[s].addr_mask)) begin
         return S_IDX_W'(s);
@@ -39,7 +76,6 @@ module axi4_xbar
 
   // -------------------------------------------------------------------------
   // Per-Master Active Write & Read Transaction Trackers (In-Order per Master)
-  // Allows full concurrent crossbar paths across distinct Slave targets!
   // -------------------------------------------------------------------------
   logic [NUM_MASTERS-1:0]              wr_busy_q, rd_busy_q;
   logic [NUM_MASTERS-1:0][S_IDX_W-1:0] wr_tgt_q,  rd_tgt_q;
@@ -51,9 +87,8 @@ module axi4_xbar
   logic [NUM_MASTERS-1:0][7:0]         err_rlen_q;
   logic [NUM_MASTERS-1:0]              err_bvalid_q, err_rvalid_q;
 
-  // Slave write & read ownership (locked from AW->B and AR->RLAST for clean ID routing)
+  // Slave write & read ownership (locked from AW->B and AR->RLAST)
   logic [NUM_SLAVES-1:0]               s_wr_locked_q, s_rd_locked_q;
-  logic [NUM_SLAVES-1:0][M_IDX_W-1:0]  s_wr_owner_q,  s_rd_owner_q;
 
   logic [NUM_SLAVES-1:0][NUM_MASTERS-1:0] s_wr_req, s_wr_gnt, s_rd_req, s_rd_gnt;
   logic [NUM_SLAVES-1:0][M_IDX_W-1:0]     s_wr_win, s_rd_win;
@@ -61,8 +96,8 @@ module axi4_xbar
 
   logic [NUM_MASTERS-1:0][3:0] m_aw_qos, m_ar_qos;
   for (genvar m = 0; m < NUM_MASTERS; m++) begin : gen_qos_extract
-    assign m_aw_qos[m] = m_axi_i[m].awqos;
-    assign m_ar_qos[m] = m_axi_i[m].arqos;
+    assign m_aw_qos[m] = m_s[m].awqos;
+    assign m_ar_qos[m] = m_s[m].arqos;
   end
 
   for (genvar s = 0; s < NUM_SLAVES; s++) begin : gen_slave_arbs
@@ -77,7 +112,7 @@ module axi4_xbar
       .req_i   (s_wr_req[s]),
       .qos_i   (m_aw_qos),
       .lock_i  (s_wr_locked_q[s]),
-      .ack_i   (s_axi_i[s].bvalid && s_axi_o[s].bready),
+      .ack_i   (s_s[s].bvalid && s_m[s].bready),
       .gnt_o   (s_wr_gnt[s]),
       .idx_o   (s_wr_win[s]),
       .valid_o (s_wr_vld[s])
@@ -89,7 +124,7 @@ module axi4_xbar
       .req_i   (s_rd_req[s]),
       .qos_i   (m_ar_qos),
       .lock_i  (s_rd_locked_q[s]),
-      .ack_i   (s_axi_i[s].rvalid && s_axi_o[s].rready && s_axi_i[s].rlast),
+      .ack_i   (s_s[s].rvalid && s_m[s].rready && s_s[s].rlast),
       .gnt_o   (s_rd_gnt[s]),
       .idx_o   (s_rd_win[s]),
       .valid_o (s_rd_vld[s])
@@ -99,80 +134,76 @@ module axi4_xbar
   // Combinational Crossbar Fabric Muxing
   always_comb begin
     for (int s = 0; s < NUM_SLAVES; s++) begin
-      s_axi_o[s] = '0;
+      s_m[s] = '0;
       if (s_wr_vld[s]) begin
-        int mw;
-        mw = int'(s_wr_win[s]);
-        s_axi_o[s].awid    = m_axi_i[mw].awid;
-        s_axi_o[s].awaddr  = m_axi_i[mw].awaddr;
-        s_axi_o[s].awlen   = m_axi_i[mw].awlen;
-        s_axi_o[s].awsize  = m_axi_i[mw].awsize;
-        s_axi_o[s].awburst = m_axi_i[mw].awburst;
-        s_axi_o[s].awprot  = m_axi_i[mw].awprot;
-        s_axi_o[s].awqos   = m_axi_i[mw].awqos;
-        s_axi_o[s].awvalid = m_axi_i[mw].awvalid && !wr_aw_sent_q[mw];
-        s_axi_o[s].wdata   = m_axi_i[mw].wdata;
-        s_axi_o[s].wstrb   = m_axi_i[mw].wstrb;
-        s_axi_o[s].wlast   = m_axi_i[mw].wlast;
-        s_axi_o[s].wvalid  = m_axi_i[mw].wvalid  && !wr_w_done_q[mw];
-        s_axi_o[s].bready  = m_axi_i[mw].bready;
+        automatic int mw = int'(s_wr_win[s]);
+        s_m[s].awid    = m_s[mw].awid;
+        s_m[s].awaddr  = m_s[mw].awaddr;
+        s_m[s].awlen   = m_s[mw].awlen;
+        s_m[s].awsize  = m_s[mw].awsize;
+        s_m[s].awburst = m_s[mw].awburst;
+        s_m[s].awprot  = m_s[mw].awprot;
+        s_m[s].awqos   = m_s[mw].awqos;
+        s_m[s].awvalid = m_s[mw].awvalid && !wr_aw_sent_q[mw];
+        s_m[s].wdata   = m_s[mw].wdata;
+        s_m[s].wstrb   = m_s[mw].wstrb;
+        s_m[s].wlast   = m_s[mw].wlast;
+        s_m[s].wvalid  = m_s[mw].wvalid  && !wr_w_done_q[mw];
+        s_m[s].bready  = m_s[mw].bready;
       end
       if (s_rd_vld[s]) begin
-        int mr;
-        mr = int'(s_rd_win[s]);
-        s_axi_o[s].arid    = m_axi_i[mr].arid;
-        s_axi_o[s].araddr  = m_axi_i[mr].araddr;
-        s_axi_o[s].arlen   = m_axi_i[mr].arlen;
-        s_axi_o[s].arsize  = m_axi_i[mr].arsize;
-        s_axi_o[s].arburst = m_axi_i[mr].arburst;
-        s_axi_o[s].arprot  = m_axi_i[mr].arprot;
-        s_axi_o[s].arqos   = m_axi_i[mr].arqos;
-        s_axi_o[s].arvalid = m_axi_i[mr].arvalid && !rd_ar_sent_q[mr];
-        s_axi_o[s].rready  = m_axi_i[mr].rready;
+        automatic int mr = int'(s_rd_win[s]);
+        s_m[s].arid    = m_s[mr].arid;
+        s_m[s].araddr  = m_s[mr].araddr;
+        s_m[s].arlen   = m_s[mr].arlen;
+        s_m[s].arsize  = m_s[mr].arsize;
+        s_m[s].arburst = m_s[mr].arburst;
+        s_m[s].arprot  = m_s[mr].arprot;
+        s_m[s].arqos   = m_s[mr].arqos;
+        s_m[s].arvalid = m_s[mr].arvalid && !rd_ar_sent_q[mr];
+        s_m[s].rready  = m_s[mr].rready;
       end
     end
 
     for (int m = 0; m < NUM_MASTERS; m++) begin
-      m_axi_o[m] = '0;
+      m_m[m] = '0;
       // Write return path
       if (wr_busy_q[m]) begin
         if (wr_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) begin
-          m_axi_o[m].awready = !wr_aw_sent_q[m];
-          m_axi_o[m].wready  = !wr_w_done_q[m];
-          m_axi_o[m].bvalid  = err_bvalid_q[m];
-          m_axi_o[m].bid     = err_wid_q[m];
-          m_axi_o[m].bresp   = AXI_RESP_DECERR;
+          m_m[m].awready = !wr_aw_sent_q[m];
+          m_m[m].wready  = !wr_w_done_q[m];
+          m_m[m].bvalid  = err_bvalid_q[m];
+          m_m[m].bid     = err_wid_q[m];
+          m_m[m].bresp   = AXI_RESP_DECERR;
         end else begin
-          int sw;
-          sw = int'(wr_tgt_q[m]);
+          automatic int sw = int'(wr_tgt_q[m]);
           if (s_wr_gnt[sw][m]) begin
-            m_axi_o[m].awready = s_axi_i[sw].awready && !wr_aw_sent_q[m];
-            m_axi_o[m].wready  = s_axi_i[sw].wready  && !wr_w_done_q[m];
-            m_axi_o[m].bvalid  = s_axi_i[sw].bvalid;
-            m_axi_o[m].bid     = s_axi_i[sw].bid;
-            m_axi_o[m].bresp   = s_axi_i[sw].bresp;
+            m_m[m].awready = s_s[sw].awready && !wr_aw_sent_q[m];
+            m_m[m].wready  = s_s[sw].wready  && !wr_w_done_q[m];
+            m_m[m].bvalid  = s_s[sw].bvalid;
+            m_m[m].bid     = s_s[sw].bid;
+            m_m[m].bresp   = s_s[sw].bresp;
           end
         end
       end
       // Read return path
       if (rd_busy_q[m]) begin
         if (rd_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) begin
-          m_axi_o[m].arready = !rd_ar_sent_q[m];
-          m_axi_o[m].rvalid  = err_rvalid_q[m];
-          m_axi_o[m].rid     = err_rid_q[m];
-          m_axi_o[m].rdata   = 32'hBAD0_DEC0;
-          m_axi_o[m].rresp   = AXI_RESP_DECERR;
-          m_axi_o[m].rlast   = (err_rlen_q[m] == 8'd0);
+          m_m[m].arready = !rd_ar_sent_q[m];
+          m_m[m].rvalid  = err_rvalid_q[m];
+          m_m[m].rid     = err_rid_q[m];
+          m_m[m].rdata   = 32'hBAD0_DEC0;
+          m_m[m].rresp   = AXI_RESP_DECERR;
+          m_m[m].rlast   = (err_rlen_q[m] == 8'd0);
         end else begin
-          int sr;
-          sr = int'(rd_tgt_q[m]);
+          automatic int sr = int'(rd_tgt_q[m]);
           if (s_rd_gnt[sr][m]) begin
-            m_axi_o[m].arready = s_axi_i[sr].arready && !rd_ar_sent_q[m];
-            m_axi_o[m].rvalid  = s_axi_i[sr].rvalid;
-            m_axi_o[m].rid     = s_axi_i[sr].rid;
-            m_axi_o[m].rdata   = s_axi_i[sr].rdata;
-            m_axi_o[m].rresp   = s_axi_i[sr].rresp;
-            m_axi_o[m].rlast   = s_axi_i[sr].rlast;
+            m_m[m].arready = s_s[sr].arready && !rd_ar_sent_q[m];
+            m_m[m].rvalid  = s_s[sr].rvalid;
+            m_m[m].rid     = s_s[sr].rid;
+            m_m[m].rdata   = s_s[sr].rdata;
+            m_m[m].rresp   = s_s[sr].rresp;
+            m_m[m].rlast   = s_s[sr].rlast;
           end
         end
       end
@@ -195,67 +226,64 @@ module axi4_xbar
       err_rvalid_q  <= '0;
       s_wr_locked_q <= '0;
       s_rd_locked_q <= '0;
-      s_wr_owner_q  <= '0;
-      s_rd_owner_q  <= '0;
     end else begin
       // Update slave lock state
       for (int s = 0; s < NUM_SLAVES; s++) begin
-        if (s_wr_vld[s] && !s_wr_locked_q[s]) begin
-          s_wr_locked_q[s] <= 1'b1;
-          s_wr_owner_q[s]  <= s_wr_win[s];
-        end
-        if (s_wr_vld[s] && s_axi_i[s].bvalid && s_axi_o[s].bready) begin
+        if (s_wr_vld[s] && s_s[s].bvalid && s_m[s].bready) begin
           s_wr_locked_q[s] <= 1'b0;
+        end else if (s_wr_vld[s] && !s_wr_locked_q[s]) begin
+          s_wr_locked_q[s] <= 1'b1;
         end
 
-        if (s_rd_vld[s] && !s_rd_locked_q[s]) begin
-          s_rd_locked_q[s] <= 1'b1;
-          s_rd_owner_q[s]  <= s_rd_win[s];
-        end
-        if (s_rd_vld[s] && s_axi_i[s].rvalid && s_axi_o[s].rready && s_axi_i[s].rlast) begin
+        if (s_rd_vld[s] && s_s[s].rvalid && s_m[s].rready && s_s[s].rlast) begin
           s_rd_locked_q[s] <= 1'b0;
+        end else if (s_rd_vld[s] && !s_rd_locked_q[s]) begin
+          s_rd_locked_q[s] <= 1'b1;
         end
       end
 
       // Per-master write & read FSMs
       for (int m = 0; m < NUM_MASTERS; m++) begin
         if (!wr_busy_q[m]) begin
-          if (m_axi_i[m].awvalid) begin
+          if (m_s[m].awvalid) begin
             wr_busy_q[m]    <= 1'b1;
-            wr_tgt_q[m]     <= decode_addr(m_axi_i[m].awaddr, addr_map_i);
+            wr_tgt_q[m]     <= decode_burst(m_s[m].awaddr, m_s[m].awlen, m_s[m].awsize, m_s[m].awburst, addr_map_i);
             wr_aw_sent_q[m] <= 1'b0;
             wr_w_done_q[m]  <= 1'b0;
-            err_wid_q[m]    <= m_axi_i[m].awid;
+            err_wid_q[m]    <= m_s[m].awid;
             err_bvalid_q[m] <= 1'b0;
           end
         end else begin
-          if (m_axi_i[m].awvalid && m_axi_o[m].awready) wr_aw_sent_q[m] <= 1'b1;
-          if (m_axi_i[m].wvalid  && m_axi_o[m].wready && m_axi_i[m].wlast) begin
-            wr_w_done_q[m] <= 1'b1;
-            if (wr_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) err_bvalid_q[m] <= 1'b1;
-          end
-          if (m_axi_o[m].bvalid && m_axi_i[m].bready) begin
+          automatic logic aw_now = wr_aw_sent_q[m] || (m_s[m].awvalid && m_m[m].awready);
+          automatic logic w_now  = wr_w_done_q[m]  || (m_s[m].wvalid  && m_m[m].wready && m_s[m].wlast);
+
+          if (m_s[m].awvalid && m_m[m].awready) wr_aw_sent_q[m] <= 1'b1;
+          if (m_s[m].wvalid  && m_m[m].wready && m_s[m].wlast) wr_w_done_q[m] <= 1'b1;
+
+          if (m_m[m].bvalid && m_s[m].bready) begin
             wr_busy_q[m]    <= 1'b0;
             err_bvalid_q[m] <= 1'b0;
+          end else if ((wr_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) && aw_now && w_now && !err_bvalid_q[m]) begin
+            err_bvalid_q[m] <= 1'b1;
           end
         end
 
         if (!rd_busy_q[m]) begin
-          if (m_axi_i[m].arvalid) begin
+          if (m_s[m].arvalid) begin
             rd_busy_q[m]    <= 1'b1;
-            rd_tgt_q[m]     <= decode_addr(m_axi_i[m].araddr, addr_map_i);
+            rd_tgt_q[m]     <= decode_burst(m_s[m].araddr, m_s[m].arlen, m_s[m].arsize, m_s[m].arburst, addr_map_i);
             rd_ar_sent_q[m] <= 1'b0;
-            err_rid_q[m]    <= m_axi_i[m].arid;
-            err_rlen_q[m]   <= m_axi_i[m].arlen;
+            err_rid_q[m]    <= m_s[m].arid;
+            err_rlen_q[m]   <= m_s[m].arlen;
             err_rvalid_q[m] <= 1'b0;
           end
         end else begin
-          if (m_axi_i[m].arvalid && m_axi_o[m].arready) begin
+          if (m_s[m].arvalid && m_m[m].arready) begin
             rd_ar_sent_q[m] <= 1'b1;
             if (rd_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) err_rvalid_q[m] <= 1'b1;
           end
-          if (m_axi_o[m].rvalid && m_axi_i[m].rready) begin
-            if (m_axi_o[m].rlast) begin
+          if (m_m[m].rvalid && m_s[m].rready) begin
+            if (m_m[m].rlast) begin
               rd_busy_q[m]    <= 1'b0;
               err_rvalid_q[m] <= 1'b0;
             end else if (rd_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) begin

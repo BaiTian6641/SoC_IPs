@@ -6,6 +6,7 @@ module mem_to_axi4_master
 (
   input  logic      clk_i,
   input  logic      rst_ni,
+  input  logic      abort_i = 1'b0,
 
   input  mem_req_t  mem_req_i,
   output mem_rsp_t  mem_rsp_o,
@@ -109,6 +110,10 @@ module mem_to_axi4_master
       burst_q     <= AXI_BURST_INCR;
       aw_done_q   <= 1'b0;
       w_done_q    <= 1'b0;
+    end else if (abort_i) begin
+      state_q   <= ST_IDLE;
+      aw_done_q <= 1'b0;
+      w_done_q  <= 1'b0;
     end else begin
       unique case (state_q)
         ST_IDLE: begin

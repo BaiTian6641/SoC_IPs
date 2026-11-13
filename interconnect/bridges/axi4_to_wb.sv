@@ -39,8 +39,8 @@ module axi4_to_wb
   assign mem_req.size       = 3'd2;
   assign mem_req.burst_wrap = 1'b0;
   assign mem_req.last       = 1'b1;
-  assign mem_req.id         = 4'd0;
-  assign mem_req.qos        = 4'd0;
+  assign mem_req.id         = s_axi_i.awvalid ? s_axi_i.awid  : s_axi_i.arid;
+  assign mem_req.qos        = s_axi_i.awvalid ? s_axi_i.awqos : s_axi_i.arqos;
   assign mem_req.resp_ready = 1'b1;
 
   assign csr_rsp.ready = mem_rsp.resp_valid;

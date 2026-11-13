@@ -9,6 +9,7 @@ interface axi4_if #(
   input logic clk_i,
   input logic rst_ni
 );
+  import bus_pkg::*;
 
   // AW
   logic [ID_W-1:0]     awid;
@@ -52,6 +53,49 @@ interface axi4_if #(
   logic                rlast;
   logic                rvalid;
   logic                rready;
+
+  function automatic axi4_m2s_t to_m2s();
+    axi4_m2s_t m;
+    m.awid    = 4'(awid);
+    m.awaddr  = 32'(awaddr);
+    m.awlen   = awlen;
+    m.awsize  = awsize;
+    m.awburst = awburst;
+    m.awprot  = awprot;
+    m.awqos   = awqos;
+    m.awvalid = awvalid;
+    m.wdata   = 32'(wdata);
+    m.wstrb   = 4'(wstrb);
+    m.wlast   = wlast;
+    m.wvalid  = wvalid;
+    m.bready  = bready;
+    m.arid    = 4'(arid);
+    m.araddr  = 32'(araddr);
+    m.arlen   = arlen;
+    m.arsize  = arsize;
+    m.arburst = arburst;
+    m.arprot  = arprot;
+    m.arqos   = arqos;
+    m.arvalid = arvalid;
+    m.rready  = rready;
+    return m;
+  endfunction
+
+  function automatic axi4_s2m_t to_s2m();
+    axi4_s2m_t s;
+    s.awready = awready;
+    s.wready  = wready;
+    s.bid     = 4'(bid);
+    s.bresp   = bresp;
+    s.bvalid  = bvalid;
+    s.arready = arready;
+    s.rid     = 4'(rid);
+    s.rdata   = 32'(rdata);
+    s.rresp   = rresp;
+    s.rlast   = rlast;
+    s.rvalid  = rvalid;
+    return s;
+  endfunction
 
   modport master (
     output awid, awaddr, awlen, awsize, awburst, awprot, awqos, awvalid,

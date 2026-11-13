@@ -85,4 +85,66 @@ package tb_bfm_pkg;
     return r;
   endfunction
 
+  function automatic tl_m2s_t tl_req_amo(
+    input logic [31:0] addr,
+    input logic [31:0] operand,
+    input logic        is_arith = 1'b1,
+    input logic [2:0]  param    = 3'd4,
+    input logic [3:0]  mask     = 4'hF,
+    input logic [7:0]  src      = 8'h03
+  );
+    tl_m2s_t r;
+    r           = '0;
+    r.a_valid   = 1'b1;
+    r.a_opcode  = is_arith ? TL_OP_ARITHMETIC_DATA : TL_OP_LOGICAL_DATA;
+    r.a_param   = param;
+    r.a_size    = 4'd2;
+    r.a_source  = src;
+    r.a_address = addr;
+    r.a_mask    = mask;
+    r.a_data    = operand;
+    r.d_ready   = 1'b1;
+    return r;
+  endfunction
+
+  function automatic axi4_m2s_t axi_req_burst_aw(
+    input logic [31:0] addr,
+    input logic [7:0]  len,
+    input logic [1:0]  burst = AXI_BURST_INCR,
+    input logic [3:0]  id    = 4'd0,
+    input logic [3:0]  qos   = 4'd0
+  );
+    axi4_m2s_t r;
+    r         = '0;
+    r.awid    = id;
+    r.awaddr  = addr;
+    r.awlen   = len;
+    r.awsize  = 3'd2;
+    r.awburst = burst;
+    r.awqos   = qos;
+    r.awvalid = 1'b1;
+    r.bready  = 1'b1;
+    return r;
+  endfunction
+
+  function automatic axi4_m2s_t axi_req_burst_ar(
+    input logic [31:0] addr,
+    input logic [7:0]  len,
+    input logic [1:0]  burst = AXI_BURST_INCR,
+    input logic [3:0]  id    = 4'd0,
+    input logic [3:0]  qos   = 4'd0
+  );
+    axi4_m2s_t r;
+    r         = '0;
+    r.arid    = id;
+    r.araddr  = addr;
+    r.arlen   = len;
+    r.arsize  = 3'd2;
+    r.arburst = burst;
+    r.arqos   = qos;
+    r.arvalid = 1'b1;
+    r.rready  = 1'b1;
+    return r;
+  endfunction
+
 endpackage : tb_bfm_pkg

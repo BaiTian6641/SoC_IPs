@@ -2,6 +2,9 @@
 interconnect/interfaces/wb_if.sv
 interconnect/interfaces/axi4_if.sv
 interconnect/interfaces/tl_if.sv
+interconnect/slices/wb_reg_slice.sv
+interconnect/slices/axi4_reg_slice.sv
+interconnect/slices/tl_reg_slice.sv
 interconnect/adapters/wb_to_csr.sv
 interconnect/adapters/axi_lite_to_csr.sv
 interconnect/adapters/tl_ul_to_csr.sv
@@ -18,4 +21,5 @@ interconnect/crossbars/wb_xbar.sv
 interconnect/crossbars/axi4_xbar.sv
 interconnect/crossbars/tl_xbar.sv
 interconnect/smart_switch/width_upsizer_downsizer.sv
+interconnect/smart_switch/width_upsizer_32to64.sv
 interconnect/smart_switch/smart_switch_interconnect.sv

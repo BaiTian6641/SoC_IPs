@@ -75,6 +75,10 @@ ips/15_dma_gdma/rtl/gdma_wb.sv
 ips/15_dma_gdma/rtl/gdma_axi.sv
 ips/15_dma_gdma/rtl/gdma_tl.sv
 ips/15_dma_gdma/rtl/gdma_top.sv
+ips/16_gfx2d_dma/rtl/gfx2d_pkg.sv
+ips/16_gfx2d_dma/rtl/gfx2d_clut_ram.sv
+ips/16_gfx2d_dma/rtl/gfx2d_pfc.sv
+ips/16_gfx2d_dma/rtl/gfx2d_blender.sv
 ips/16_gfx2d_dma/rtl/gfx2d_dma_core.sv
 ips/16_gfx2d_dma/rtl/gfx2d_dma_wb.sv
 ips/16_gfx2d_dma/rtl/gfx2d_dma_axi.sv

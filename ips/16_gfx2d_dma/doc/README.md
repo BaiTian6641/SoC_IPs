@@ -1,30 +1,53 @@
-# 2D Graphic Accelerator & Stride-Aware 2D-DMA (`gfx2d_dma`)
+# 16_gfx2d_dma: Chrom-ART 2D GPU & DMA2D Accelerator
 
-## Overview
+Pure SystemVerilog 2D graphics accelerator modeled after STMicroelectronics' **Chrom-ART Accelerator (DMA2D)** with unified Wishbone B4 (`gfx2d_dma_wb`), AXI4 (`gfx2d_dma_axi`), and TileLink TL-UL/TL-UH (`gfx2d_dma_tl`) dual-bus (CSR + DMA) wrappers.
 
-Hardware 2D rendering & stride-aware rectangular 2D-DMA engine accelerating Solid Rectangle Fill (`2D_FILL`), Stride-to-Stride BitBLT (`2D_BLIT_COPY`), Color-Keyed Sprite Blitting (`2D_COLOR_KEY`), Porter-Duff Source-Over Alpha Blending (`2D_ALPHA_BLEND` with per-pixel `ARGB8888` or global constant alpha), Bitwise Raster Ops (`XOR`/`AND`/`OR`/`NOT`), and on-the-fly Pixel Format Conversion (`ARGB8888` <-> `RGB565` <-> `L8`).
+For complete pipeline architecture, Porter-Duff equations, Bayer dithering, and C software recipes, see [04_chromart_2d_gpu_guide.md](../../../docs/04_chromart_2d_gpu_guide.md).
 
-## Available RTL Modules & Bus Wrappers
+## Key Features
+- **8 Operating Modes (`CR.MODE`)**: `M2M`, `M2M_PFC`, `M2M_BLEND`, `R2M`, `M2M_BLEND_FG`, `M2M_BLEND_BG`, `M2M_COLKEY`, `M2M_ROP` (8 bitwise ROPs: `XOR`, `AND`, `OR`, `NOR`, `NAND`, `INV_FG`, `COPY_FG`, `AND_INV`).
+- **11 Input Color Modes**: `ARGB8888`, `RGB888`, `RGB565`, `ARGB1555`, `ARGB4444`, `L8`, `AL44`, `AL88`, `L4`, `A8`, `A4` (with `L4`/`A4` low-nibble-first pixel packing), plus `AM` (`NOP`/`REPLACE`/`MULTIPLY`), `AI` (Alpha Invert), and `RBS` (Red/Blue Swap).
+- **6 Output Color Modes**: `ARGB8888`, `RGB888`, `RGB565`, `ARGB1555`, `ARGB4444`, `L8` (`(2R + 5G + B) >> 3`), plus optional 2x2 ordered Bayer dithering (`OPFCCR.DITHER_EN`) and `R2M_PFC`.
+- **Dual 256 x 32-bit CLUT SRAMs (`gfx2d_clut_ram`)**: Supports hardware DMA autoload (`FGCMAR`/`BGCMAR`, up to 16-word bursts with 4KB boundary splitting) and direct CPU read/write CSR apertures (`0x400..0x7FC` FG, `0x800..0xBFC` BG).
+- **Tile Burst Engine (`TILE_PX = 16`)**: Automatic 4KB boundary burst splitting, byte-accurate write strobes (`out_strb_q`), pixel-based 2D stride (`FGOR`/`BGOR`/`OOR`), Line Watermark IRQ (`LWR`/`TWIF`), `SUSP` / `ABORT` controls, `AMTCR` bus dead-time throttling, and performance counters (`PERF_PIXELS`, `PERF_CYCLES`).
 
-- **Core Logic**: `ips/16_gfx2d_dma/rtl/*_core.sv`
-- **Tri-Bus Wrappers**: `gfx2d_dma_wb / gfx2d_dma_axi / gfx2d_dma_tl / gfx2d_dma_top` (Wishbone B4, AMBA AXI4/AXI4-Lite, TileLink TL-UL/TL-UH, and parameterized unified `*_top`)
-- **Self-Checking Testbench**: `ips/16_gfx2d_dma/tb/tb_*.sv`
+## RTL Files (`ips/16_gfx2d_dma/rtl/`)
+- `gfx2d_pkg.sv` — Package types, enums, CSR map constants, and `div255` arithmetic helper.
+- `gfx2d_clut_ram.sv` — Dual-port 256 x 32-bit CLUT SRAM.
+- `gfx2d_pfc.sv` — `gfx2d_in_pfc` (11 formats) and `gfx2d_out_pfc` (6 formats + 2x2 Bayer dither).
+- `gfx2d_blender.sv` — Fixed-point Porter-Duff Over blender, Color-Key mux, and 8-op ROP unit.
+- `gfx2d_dma_core.sv` — Core FSM, DMA scheduler, CLUT autoloader, watermark, suspend/abort, and dead-time logic.
+- `gfx2d_dma_wb.sv`, `gfx2d_dma_axi.sv`, `gfx2d_dma_tl.sv`, `gfx2d_dma_top.sv` — Protocol wrappers and top-level selector.
 
-## Register Map
+## Register Map (`0x000..0xBFC`)
 
-| Offset | Register | Access | Description |
-| :--- | :--- | :--- | :--- |
-| `0x00` | `OP_CTRL` | RW | `[0]` start(WO), `[3:1]` op (`0`:Fill, `1`:Blit, `2`:ColorKey, `3`:AlphaBlend, `4`:ROP), `[5:4]` src_fmt, `[7:6]` dst_fmt, `[9:8]` rop, `[10]` use_const_alpha, `[23:16]` const_alpha |
-| `0x04` | `SRC_BASE` | RW | `[31:0]` Source surface base byte address |
-| `0x08` | `DST_BASE` | RW | `[31:0]` Destination surface base byte address |
-| `0x0C` | `STRIDES` | RW | `[15:0]` src_stride_bytes, `[31:16]` dst_stride_bytes |
-| `0x10` | `DIMENSIONS` | RW | `[15:0]` width_pixels, `[31:16]` height_lines |
-| `0x14` | `FILL_COLOR` | RW | `[31:0]` ARGB8888 fill color |
-| `0x18` | `COLOR_KEY` | RW | `[23:0]` RGB888 transparent key color |
-| `0x1C` | `STATUS` | RW | `[0]` busy, `[1]` done (W1C), `[2]` bus_err (W1C), `[3]` irq_en |
-| `0x20` | `PERF_PIXELS` | RO | `[31:0]` Cumulative rendered pixels counter |
+| Offset | Name | Description |
+| :--- | :--- | :--- |
+| `0x000` | `CR` | Control (`[0]` `START`, `[1]` `SUSP`, `[2]` `ABORT`, `[8:13]` `TEIE/TCIE/TWIE/CAEIE/CTCIE/CEIE`, `[18:16]` `MODE`, `[21:19]` `ROP`) |
+| `0x004` | `ISR` | Interrupt & Status RO (`[5:0]` `TEIF/TCIF/TWIF/CAEIF/CTCIF/CEIF`, `[16]` `BUSY`, `[17]` `CLUT_BUSY`, `[18]` `SUSPENDED`) |
+| `0x008` | `IFCR` | Interrupt Flag Clear WO (`[5:0]` W1C) |
+| `0x00C` | `FGMAR` | Foreground Memory Address |
+| `0x010` | `FGOR` | Foreground Line Offset (`[13:0]`, pixels) |
+| `0x014` | `BGMAR` | Background Memory Address |
+| `0x018` | `BGOR` | Background Line Offset (`[13:0]`, pixels) |
+| `0x01C` | `FGPFCCR` | FG PFC Control (`[3:0]` `CM`, `[4]` `CCM`, `[5]` `START`, `[15:8]` `CS`, `[17:16]` `AM`, `[20]` `AI`, `[21]` `RBS`, `[31:24]` `ALPHA`) |
+| `0x020` | `FGCOLR` | Foreground RGB Color (`[23:0]`) |
+| `0x024` | `BGPFCCR` | BG PFC Control (same layout as `FGPFCCR`) |
+| `0x028` | `BGCOLR` | Background RGB Color (`[23:0]`) |
+| `0x02C` | `FGCMAR` | Foreground CLUT Memory Address |
+| `0x030` | `BGCMAR` | Background CLUT Memory Address |
+| `0x034` | `OPFCCR` | Output PFC Control (`[2:0]` `CM`, `[16]` `DITHER_EN`, `[17]` `R2M_PFC`, `[20]` `AI`, `[21]` `RBS`) |
+| `0x038` | `OCOLR` | Output Fill Color (`[31:0]`, used by `R2M`) |
+| `0x03C` | `OMAR` | Output Memory Address (`[31:0]`) |
+| `0x040` | `OOR` | Output Line Offset (`[13:0]`, pixels) |
+| `0x044` | `NLR` | Number of Lines & Pixels (`[29:16]` `PL`, `[15:0]` `NL`) |
+| `0x048` | `LWR` | Line Watermark (`[15:0]`) |
+| `0x04C` | `AMTCR` | AHB Master Timer / Dead-Time Control (`[0]` `EN`, `[15:8]` `DT`) |
+| `0x050` | `COLKEY` | RGB Color Key (`[23:0]`) |
+| `0x054` | `PERF_PIXELS` | Total Pixels Processed (RO) |
+| `0x058` | `PERF_CYCLES` | Total Active Cycles (RO) |
+| `0x400..0x7FC` | `FG_CLUT[0..255]` | Direct CPU FG CLUT SRAM Aperture (256 x 32-bit) |
+| `0x800..0xBFC` | `BG_CLUT[0..255]` | Direct CPU BG CLUT SRAM Aperture (256 x 32-bit) |
 
-## Programming & Integration Sequence
-
-1. Configure `SRC_BASE` (`0x04`), `DST_BASE` (`0x08`), row `STRIDES` (`0x0C`), and rectangle `DIMENSIONS` (`0x10`).
-2. Select pixel formats (`ARGB8888=0`, `RGB565=1`, `L8=2`) and operation mode in `OP_CTRL` (`0x00`) with `bit[0]=1` to launch hardware 2D acceleration.
+## Verification (`ips/16_gfx2d_dma/tb/tb_gfx2d_dma.sv`)
+Self-checking Verilator testbench (`make tb_gfx2d_dma`) verifying `R2M` + `R2M_PFC`, strided `M2M`, `M2M_PFC` with `RBS`/`AI`/2x2 Bayer dithering/`OCM_L8`, multi-chunk & unaligned CLUT DMA autoload + CPU aperture for `L4`/`L8`/`AL44`/`AL88`, `A4`/`A8` font blending, `M2M_BLEND`/`M2M_BLEND_FG`/`M2M_BLEND_BG`, `M2M_COLKEY`, `M2M_ROP`, 4KB boundary splitting, `LWR` watermark IRQ, `SUSP`/resume, `AMTCR` dead-time, and `ABORT`. Also integrated and verified end-to-end on AXI4 in `tb_soc_subsystem`.
