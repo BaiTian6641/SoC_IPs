@@ -84,3 +84,12 @@ ips/16_gfx2d_dma/rtl/gfx2d_dma_wb.sv
 ips/16_gfx2d_dma/rtl/gfx2d_dma_axi.sv
 ips/16_gfx2d_dma/rtl/gfx2d_dma_tl.sv
 ips/16_gfx2d_dma/rtl/gfx2d_dma_top.sv
+ips/17_mini_tpu/rtl/mini_tpu_pkg.sv
+ips/17_mini_tpu/rtl/mini_tpu_fp_conv.sv
+ips/17_mini_tpu/rtl/mini_tpu_mac_array.sv
+ips/17_mini_tpu/rtl/mini_tpu_sfu.sv
+ips/17_mini_tpu/rtl/mini_tpu_core.sv
+ips/17_mini_tpu/rtl/mini_tpu_wb.sv
+ips/17_mini_tpu/rtl/mini_tpu_axi.sv
+ips/17_mini_tpu/rtl/mini_tpu_tl.sv
+ips/17_mini_tpu/rtl/mini_tpu_top.sv

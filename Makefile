@@ -6,6 +6,7 @@ VLOG      ?= vlog
 VSIM      ?= vsim
 
 VERILATOR_FLAGS := --binary -j 0 -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY -Wno-TIMESCALEMOD --timing
+IPS_TB_DIRS := -y ips/17_mini_tpu/tb
 
 ALL_TBS := \
   tb_interconnect_bridges \
@@ -26,7 +27,8 @@ ALL_TBS := \
   tb_eth_mac \
   tb_dvi_tmds \
   tb_gdma \
-  tb_gfx2d_dma
+  tb_gfx2d_dma \
+  tb_mini_tpu
 
 LINT_FLAGS := --lint-only -Wall -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY
 
@@ -61,7 +63,8 @@ LINT_TOPS := \
   eth_mac_top \
   dvi_tmds_top \
   gdma_top \
-  gfx2d_dma_top
+  gfx2d_dma_top \
+  mini_tpu_top
 
 .PHONY: all lint sim clean $(ALL_TBS)
 
@@ -77,12 +80,12 @@ sim: $(ALL_TBS)
 
 $(ALL_TBS):
 	@echo "=== Running $@ ==="
-	$(VERILATOR) $(VERILATOR_FLAGS) -f filelists/sim_all.f --top-module $@ -o sim_$@
+	$(VERILATOR) $(VERILATOR_FLAGS) $(IPS_TB_DIRS) -f filelists/sim_all.f ips/17_mini_tpu/tb/tb_mini_tpu.sv --top-module $@ -o sim_$@
 	./obj_dir/sim_$@
 
 questa:
 	vlib work
-	$(VLOG) -sv -f filelists/sim_all.f
+	$(VLOG) -sv $(IPS_TB_DIRS) +libext+.sv -f filelists/sim_all.f ips/17_mini_tpu/tb/tb_mini_tpu.sv
 	for tb in $(ALL_TBS); do $(VSIM) -c -do "run -all; quit -f" work.$$tb; done
 
 clean:

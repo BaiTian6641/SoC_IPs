@@ -15,10 +15,10 @@ This collection is organized into three strictly layered tiers written in pure s
    - `interconnect/crossbars/`: Protocol-native `M x N` non-blocking crossbars (`wb_xbar`, `axi4_xbar`, `tl_xbar`) with QoS + aging arbitration, optional pipeline slices, and unmapped/error handling.
    - `interconnect/smart_switch/`: Heterogeneous any-to-any matrix (`smart_switch_interconnect`) plus 32 <-> 64-bit data width converters (`width_upsizer_downsizer`, `width_upsizer_32to64`).
 
-3. **Tri-Bus Peripheral & Memory/Graphics IPs (`ips/01..16`)**
+3. **Tri-Bus Peripheral, Memory, Graphics, & AI/NPU IPs (`ips/01..17`)**
    - Every IP follows a modular split:
-     - `*_core.sv` (+ helper submodules such as `gfx2d_pfc.sv`, `gfx2d_blender.sv`, `gfx2d_clut_ram.sv`): Pure protocol-independent datapath, FSMs, and CSR register file.
-     - `*_{wb,axi,tl}.sv`: Thin protocol wrapper instantiating the shared adapters from `interconnect/adapters/`.
+     - `*_core.sv` (+ helper submodules such as `gfx2d_pfc.sv`, `gfx2d_blender.sv`, `gfx2d_clut_ram.sv`, `mini_tpu_fp_conv.sv`, `mini_tpu_mac_array.sv`, `mini_tpu_sfu.sv`): Pure protocol-independent datapath, scratchpads, FSMs/sequencers, and CSR register file.
+     - `*_{wb,axi,tl}.sv`: Thin protocol wrapper instantiating the shared CSR slave and DMA master adapters from `interconnect/adapters/` (plus direct ready/valid streaming ports such as `s_axis_*` / `m_axis_*` on `mini_tpu`).
      - `*_top.sv`: Unified top-level module parameterized by `BUS_TYPE` (`BUS_WISHBONE`, `BUS_AXI4`, `BUS_TILELINK`) so integrators maintain one IP drop-in regardless of SoC fabric choice.
 
 ## Multi-Master / Multi-Slave Heterogeneous Dataflow
@@ -27,7 +27,7 @@ This collection is organized into three strictly layered tiers written in pure s
 flowchart LR
   subgraph Initiators
     WB_M["Wishbone B4 CPU"]
-    AXI_M["AXI4 DMA / GPU"]
+    AXI_M["AXI4 DMA / 2D GPU / Mini-TPU"]
     TL_M["TileLink Host"]
   end
 
@@ -40,7 +40,7 @@ flowchart LR
 
   subgraph Targets
     WB_S["WB Peripherals"]
-    AXI_S["AXI4 CSRs / Memory"]
+    AXI_S["AXI4 CSRs / GPU / NPU Apertures"]
     TL_S["TL-UL / TL-UH SRAM"]
   end
 

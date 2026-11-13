@@ -1,6 +1,6 @@
 # Tian's SystemVerilog IP Core Collection
 
-A 100% pure, synthesizable **IEEE 1800-2017 SystemVerilog** SoC IP & interconnect library verified cleanly under **Verilator `-Wall`** (`31` lint top-level modules, `19` self-checking testbenches) and packaged for **FuseSoC** (`sv_ip_library.core`).
+A 100% pure, synthesizable **IEEE 1800-2017 SystemVerilog** SoC IP & interconnect library verified cleanly under **Verilator `-Wall`** (`32` lint top-level modules, `20` self-checking testbenches) and packaged for **FuseSoC** (`sv_ip_library.core`).
 
 ---
 
@@ -13,6 +13,7 @@ A 100% pure, synthesizable **IEEE 1800-2017 SystemVerilog** SoC IP & interconnec
   - Heterogeneous **`smart_switch_interconnect`** bridging any mix of Wishbone, AXI4, and TileLink masters to any mix of slaves with optional `PIPE_STAGE`, dynamic AXI QoS propagation, `abort_i` timeout recovery, and performance counters.
   - Bidirectional 32 <-> 64-bit data width converters (`width_upsizer_downsizer`, `width_upsizer_32to64` with optional `WRITE_COMBINE` + `flush_i`).
 - **Chrom-ART 2D GPU (`ips/16_gfx2d_dma`)**: Hardware 2D graphics & DMA2D engine supporting 8 modes (`M2M`, `M2M_PFC`, `M2M_BLEND`, `R2M`, `M2M_BLEND_FG`, `M2M_BLEND_BG`, `M2M_COLKEY`, 8-op `M2M_ROP`), 11 input color modes (`ARGB8888`..`A4`/`L4`), 6 output color modes + 2x2 Bayer dithering, dual 256 x 32-bit CLUT SRAMs (DMA autoload + direct CPU aperture), Porter-Duff Over alpha blending, 4KB burst splitting, `LWR` watermark IRQ, `SUSP`/`ABORT`, and `AMTCR` dead-time control.
+- **Mini-TPU / Multi-Precision NPU (`ips/17_mini_tpu`)**: Programmable 64-bit microcode AI/tensor accelerator featuring a `4 x 4 x 16` (`256` MACs/cmd) multi-precision tensor MAC array supporting **NVFP4** (`E2M1` + per-16-element `FP8 E4M3FN` block scales), **FP8** (`E4M3FN`, `E5M2`, `MIXED`), and **INT8** (`SYM`/`ASYM` with zero-points), a 4-lane FP32 vector SFU (`RELU`, `RELU6`, `LEAKY_RELU`, `SILU`, `GELU` + 6 output formats & on-chip `OBUF -> ABUF` layer chaining), 2-level hardware loops, banked `IMEM`/`SBUF`/`ABUF`/`WBUF`/`OBUF` scratchpads, 2D 4KB-safe strided DMA, and direct `s_axis_*`/`m_axis_*` tensor streaming.
 
 ---
 
@@ -21,13 +22,13 @@ A 100% pure, synthesizable **IEEE 1800-2017 SystemVerilog** SoC IP & interconnec
 ```mermaid
 flowchart TB
   M_WB["Wishbone B4 Master (CPU)"]
-  M_AXI["AXI4 Master (GDMA / Chrom-ART 2D GPU)"]
+  M_AXI["AXI4 Masters (GDMA / Chrom-ART 2D GPU / Mini-TPU NPU)"]
   M_TL["TileLink Master (TL-UL / TL-UH)"]
 
   SS["smart_switch_interconnect (PIPE_STAGE, QoS + Aging, Watchdog + abort_i)"]
 
   S_WB["WB Slave (GPIO / UART / SPI / etc.)"]
-  S_AXI["AXI4 Slave (Chrom-ART CSR / Memory)"]
+  S_AXI["AXI4 Slaves (GDMA / Chrom-ART 2D GPU / Mini-TPU CSR & Apertures)"]
   S_TL["TileLink Slave (SRAM / Atomics)"]
 
   M_WB --> SS
@@ -45,7 +46,7 @@ flowchart TB
 ```text
 tians_ip_collection/
 ├── README.md
-├── Makefile                         # Verilator lint (31 tops) & simulation (19 testbenches)
+├── Makefile                         # Verilator lint (32 tops) & simulation (20 testbenches)
 ├── sv_ip_library.core               # FuseSoC CAPI=2 core manifest (open:soc:sv_peripherals_interconnect_suite:1.0.0)
 ├── filelists/
 │   ├── common.f
@@ -57,7 +58,8 @@ tians_ip_collection/
 │   ├── 01_bus_protocols_and_wrappers.md
 │   ├── 02_interconnect_and_bridges.md
 │   ├── 03_verification_and_integration.md
-│   └── 04_chromart_2d_gpu_guide.md
+│   ├── 04_chromart_2d_gpu_guide.md
+│   └── 05_mini_tpu_npu_guide.md
 ├── common/
 │   ├── pkg/                         # bus_pkg.sv, ip_common_pkg.sv
 │   └── rtl/                         # skid_buffer.sv, rr_arbiter.sv, sync_fifo.sv, async_fifo.sv, crc_engine.sv, edge_detect.sv
@@ -68,7 +70,7 @@ tians_ip_collection/
 │   ├── bridges/                     # 6 pairwise WB <-> AXI4 <-> TL bridges
 │   ├── crossbars/                   # wb_xbar.sv, axi4_xbar.sv, tl_xbar.sv
 │   └── smart_switch/                # smart_switch_interconnect.sv, width_upsizer_downsizer.sv, width_upsizer_32to64.sv
-├── ips/                             # 16 tri-bus peripheral & memory/graphics IPs (01..16)
+├── ips/                             # 17 tri-bus peripheral, memory, graphics & AI/NPU IPs (01..17)
 └── tb/                              # Shared BFMs/RAM + SoC/crossbar/bridge system testbenches
 ```
 
@@ -85,7 +87,7 @@ tians_ip_collection/
 
 ---
 
-## Peripheral, Memory, Connectivity & Graphics IP Catalogue (16 Cores)
+## Peripheral, Memory, Connectivity, Graphics & AI IP Catalogue (17 Cores)
 
 | ID | Directory | Top Module | Description | Docs |
 | :---: | :--- | :--- | :--- | :--- |
@@ -105,6 +107,7 @@ tians_ip_collection/
 | `14` | `ips/14_dvi_tmds` | `dvi_tmds_top` | DVI/HDMI TMDS encoder & video timing generator | [README](ips/14_dvi_tmds/doc/README.md) |
 | `15` | `ips/15_dma_gdma` | `gdma_top` | General-purpose scatter-gather DMA engine | [README](ips/15_dma_gdma/doc/README.md) |
 | `16` | `ips/16_gfx2d_dma` | `gfx2d_dma_top` | Chrom-ART 2D GPU / DMA2D (11 ICM, 6 OCM, 2x2 Bayer dither, dual 256-entry CLUT, Porter-Duff blend, ColKey, 8-op ROP) | [README](ips/16_gfx2d_dma/doc/README.md) & [Guide](docs/04_chromart_2d_gpu_guide.md) |
+| `17` | `ips/17_mini_tpu` | `mini_tpu_top` | Programmable 64b-ISA Mini-TPU / NPU (`4x4x16` MAC array, `NVFP4` `E2M1` + `FP8 E4M3` block scale, `FP8` `E4M3`/`E5M2`/`MIXED`, `INT8` `SYM`/`ASYM`, 4-lane SFU, 2D DMA & `s_axis`/`m_axis` streaming) | [README](ips/17_mini_tpu/doc/README.md) & [Guide](docs/05_mini_tpu_npu_guide.md) |
 
 ---
 
@@ -114,10 +117,10 @@ tians_ip_collection/
 # Clean previous Verilator build outputs
 make clean
 
-# Lint all 31 top-level RTL modules with Verilator --lint-only -Wall
+# Lint all 32 top-level RTL modules with Verilator --lint-only -Wall
 make lint
 
-# Build and run all 19 self-checking Verilator testbenches
+# Build and run all 20 self-checking Verilator testbenches
 make sim
 
 # Run individual interconnect or IP testbenches
@@ -125,6 +128,7 @@ make tb_interconnect_bridges
 make tb_crossbars_smart_switch
 make tb_soc_subsystem
 make tb_gfx2d_dma
+make tb_mini_tpu
 ```
 
 For FuseSoC integration (`open:soc:sv_peripherals_interconnect_suite:1.0.0`), see [03_verification_and_integration.md](docs/03_verification_and_integration.md).
