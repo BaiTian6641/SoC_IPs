@@ -1,0 +1,14 @@
+ips/38_ddr_ctrl/rtl/ddr_pkg.sv
+ips/38_ddr_ctrl/rtl/ddr_ecc.sv
+ips/38_ddr_ctrl/rtl/ddr_init_fsm.sv
+ips/38_ddr_ctrl/rtl/ddr_bank_sched.sv
+ips/38_ddr_ctrl/rtl/ddr_phy_soft.sv
+ips/38_ddr_ctrl/rtl/ddr_ctrl_core.sv
+ips/38_ddr_ctrl/rtl/ddr_axi4_to_mem.sv
+ips/38_ddr_ctrl/rtl/ddr_wb_to_mem.sv
+ips/38_ddr_ctrl/rtl/ddr_tl_to_mem.sv
+ips/38_ddr_ctrl/rtl/ddr_ctrl_wb.sv
+ips/38_ddr_ctrl/rtl/ddr_ctrl_axi.sv
+ips/38_ddr_ctrl/rtl/ddr_ctrl_tl.sv
+ips/38_ddr_ctrl/rtl/ddr_ctrl_apb.sv
+ips/38_ddr_ctrl/rtl/ddr_ctrl_top.sv

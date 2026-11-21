@@ -1,0 +1,13 @@
+ips/40_usb2_otg/rtl/usb2_pkg.sv
+ips/40_usb2_otg/rtl/usb2_crc.sv
+ips/40_usb2_otg/rtl/usb2_ulpi_bridge.sv
+ips/40_usb2_otg/rtl/usb2_fs_phy_soft.sv
+ips/40_usb2_otg/rtl/usb2_sie.sv
+ips/40_usb2_otg/rtl/usb2_proto.sv
+ips/40_usb2_otg/rtl/usb2_dma.sv
+ips/40_usb2_otg/rtl/usb2_core.sv
+ips/40_usb2_otg/rtl/usb2_otg_wb.sv
+ips/40_usb2_otg/rtl/usb2_otg_axi.sv
+ips/40_usb2_otg/rtl/usb2_otg_tl.sv
+ips/40_usb2_otg/rtl/usb2_otg_apb.sv
+ips/40_usb2_otg/rtl/usb2_otg_top.sv

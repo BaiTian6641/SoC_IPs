@@ -1,0 +1,9 @@
+ips/32_pka/rtl/pka_pkg.sv
+ips/32_pka/rtl/pka_sram_1r1w.sv
+ips/32_pka/rtl/pka_mont_mul.sv
+ips/32_pka/rtl/pka_core.sv
+ips/32_pka/rtl/pka_wb.sv
+ips/32_pka/rtl/pka_axi.sv
+ips/32_pka/rtl/pka_tl.sv
+ips/32_pka/rtl/pka_apb.sv
+ips/32_pka/rtl/pka_top.sv

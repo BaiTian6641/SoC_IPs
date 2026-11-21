@@ -14,6 +14,7 @@
 #   make <tb_name>            build + run a single testbench (e.g. make tb_gpio)
 #   make list                 print LINT_TOPS and ALL_TBS
 #   make check_lists          consistency check of filelists / FuseSoC core vs. tables below
+#   make check_yosys          static Yosys/FPGA/ASIC synthesis compatibility check
 #   make core                 regenerate sv_ip_library.core (scripts/gen_fusesoc_core.py)
 #   make clean
 #
@@ -101,9 +102,19 @@ IP_CRYPTO := 28_crypto
 IP_CORDIC   := 29_cordic
 IP_FFT      := 30_fft
 IP_DSP_FILT := 31_dsp_filter
+IP_PKA      := 32_pka
+IP_OTP_TRNG := 33_otp_trng_keymgr
+IP_CSI2     := 34_mipi_csi2_rx
+IP_DSI      := 35_mipi_dsi_tx
+IP_SYSCTRL  := 36_soc_sysctrl
+IP_IPC_DBG  := 37_ipc_debug
+IP_DDR      := 38_ddr_ctrl
+IP_SERDES   := 39_serdes_combo
+IP_USB2     := 40_usb2_otg
 ALL_IPS   := $(IP_UART) $(IP_SPI) $(IP_I2C) $(IP_XSPI) $(IP_HYPER) $(IP_EXTMEM) \
              $(IP_NVPSRAM) $(IP_GPIO) $(IP_I2S) $(IP_LEDC) $(IP_JTAG) $(IP_CAN) \
-             $(IP_ETH) $(IP_DVI) $(IP_GDMA) $(IP_GFX) $(IP_TPU) $(IP_RMT) $(IP_IR) $(IP_HUB75) $(IP_PARIF) $(IP_FLEXBUS) $(IP_PIO) $(IP_TIMERS) $(IP_INTC) $(IP_WDTRTC) $(IP_SDMMC) $(IP_CRYPTO) $(IP_CORDIC) $(IP_FFT) $(IP_DSP_FILT)
+             $(IP_ETH) $(IP_DVI) $(IP_GDMA) $(IP_GFX) $(IP_TPU) $(IP_RMT) $(IP_IR) $(IP_HUB75) $(IP_PARIF) $(IP_FLEXBUS) $(IP_PIO) $(IP_TIMERS) $(IP_INTC) $(IP_WDTRTC) $(IP_SDMMC) $(IP_CRYPTO) $(IP_CORDIC) $(IP_FFT) $(IP_DSP_FILT) \
+             $(IP_PKA) $(IP_OTP_TRNG) $(IP_CSI2) $(IP_DSI) $(IP_SYSCTRL) $(IP_IPC_DBG) $(IP_DDR) $(IP_SERDES) $(IP_USB2)
 
 # ---- Lint tops: interconnect / common (no IP needed) --------------------------
 $(eval $(call LINT,wb_xbar,))
@@ -145,11 +156,22 @@ $(eval $(call LINT,axil_to_axi4,))
 $(eval $(call LINT,axi4_burst_splitter,))
 $(eval $(call LINT,axi4_id_remap,))
 
+# ---- Lint tops: tech cells (common/rtl/tech/) --------------------------------
+$(eval $(call LINT,tech_icg,))
+$(eval $(call LINT,tech_cdc_sync,))
+$(eval $(call LINT,tech_rst_sync,))
+$(eval $(call LINT,tech_iddr,))
+$(eval $(call LINT,tech_oddr,))
+$(eval $(call LINT,tech_sram_sp,))
+$(eval $(call LINT,tech_sram_sdp,))
+$(eval $(call LINT,tech_serdes_io,))
+
 # ---- Lint tops: IPs -----------------------------------------------------------
 $(eval $(call LINT,uart_usart_top,$(IP_UART)))
 $(eval $(call LINT,spi_top,$(IP_SPI)))
 $(eval $(call LINT,i2c_i3c_top,$(IP_I2C)))
 $(eval $(call LINT,xspi_xip_top,$(IP_XSPI)))
+$(eval $(call LINT,xspi_xip_v2_top,$(IP_XSPI)))
 $(eval $(call LINT,hyperram_ctrl_top,$(IP_HYPER)))
 $(eval $(call LINT,ext_mem_ctrl_top,$(IP_EXTMEM)))
 $(eval $(call LINT,nvpsram_ctrl_top,$(IP_NVPSRAM)))
@@ -179,8 +201,24 @@ $(eval $(call LINT,irq_aggregator,$(IP_INTC)))
 $(eval $(call LINT,cordic_top,$(IP_CORDIC)))
 $(eval $(call LINT,fft_top,$(IP_FFT)))
 $(eval $(call LINT,dsp_filter_top,$(IP_DSP_FILT)))
+$(eval $(call LINT,pka_top,$(IP_PKA)))
+$(eval $(call LINT,otp_trng_keymgr_top,$(IP_OTP_TRNG)))
+$(eval $(call LINT,mipi_csi2_rx_top,$(IP_CSI2)))
+$(eval $(call LINT,mipi_dsi_tx_top,$(IP_DSI)))
+$(eval $(call LINT,crg_top,$(IP_SYSCTRL)))
+$(eval $(call LINT,iomux_top,$(IP_SYSCTRL)))
+$(eval $(call LINT,pmu_top,$(IP_SYSCTRL)))
+$(eval $(call LINT,bus_firewall_top,$(IP_SYSCTRL)))
+$(eval $(call LINT,sram_ecc_wrap,$(IP_SYSCTRL)))
+$(eval $(call LINT,ipc_mailbox_top,$(IP_IPC_DBG)))
+$(eval $(call LINT,riscv_dm_top,$(IP_IPC_DBG)))
+$(eval $(call LINT,adc_pdm_top,$(IP_IPC_DBG)))
+$(eval $(call LINT,ddr_ctrl_top,$(IP_DDR)))
+$(eval $(call LINT,serdes_combo_top,$(IP_SERDES)))
+$(eval $(call LINT,usb2_otg_top,$(IP_USB2)))
 
 # ---- Testbenches ----------------------------------------------------------------
+$(eval $(call TB,tb_tech_cells,tb/tb_tech_cells.sv,,))
 $(eval $(call TB,tb_interconnect_bridges,tb/tb_interconnect_bridges.sv,,))
 $(eval $(call TB,tb_crossbars_smart_switch,tb/tb_crossbars_smart_switch.sv,,))
 $(eval $(call TB,tb_axis_utils,tb/tb_axis_utils.sv,,))
@@ -190,6 +228,7 @@ $(eval $(call TB,tb_uart_usart,ips/01_uart_usart/tb/tb_uart_usart.sv,$(IP_UART),
 $(eval $(call TB,tb_spi,ips/02_spi/tb/tb_spi.sv,$(IP_SPI),))
 $(eval $(call TB,tb_i2c_i3c,ips/03_i2c_i3c/tb/tb_i2c_i3c.sv,$(IP_I2C),))
 $(eval $(call TB,tb_xspi_xip,ips/04_xspi_xip/tb/tb_xspi_xip.sv,$(IP_XSPI),))
+$(eval $(call TB,tb_xspi_xip_v2,ips/04_xspi_xip/tb/tb_xspi_xip_v2.sv,$(IP_XSPI),))
 $(eval $(call TB,tb_hyperram_ctrl,ips/05_hyperram/tb/tb_hyperram_ctrl.sv,$(IP_HYPER),))
 $(eval $(call TB,tb_ext_mem_ctrl,ips/06_sdram_sram_nvsram/tb/tb_ext_mem_ctrl.sv,$(IP_EXTMEM),))
 $(eval $(call TB,tb_nvpsram_ctrl,ips/07_nvpsram/tb/tb_nvpsram_ctrl.sv,$(IP_NVPSRAM),))
@@ -219,9 +258,19 @@ $(eval $(call TB,tb_wdt_rtc,ips/26_wdt_rtc/tb/tb_wdt_rtc.sv,$(IP_WDTRTC),))
 $(eval $(call TB,tb_sdmmc,ips/27_sdmmc/tb/tb_sdmmc.sv,$(IP_SDMMC),ips/27_sdmmc/tb/tb_sd_card.sv))
 $(eval $(call TB,tb_sd_card_selftest,ips/27_sdmmc/tb/tb_sd_card_selftest.sv,,ips/27_sdmmc/tb/tb_sd_card.sv))
 $(eval $(call TB,tb_crypto,ips/28_crypto/tb/tb_crypto.sv,$(IP_CRYPTO),))
+$(eval $(call TB,tb_crypto_v2,ips/28_crypto/tb/tb_crypto_v2.sv,$(IP_CRYPTO),))
 $(eval $(call TB,tb_cordic,ips/29_cordic/tb/tb_cordic.sv,$(IP_CORDIC),))
 $(eval $(call TB,tb_fft,ips/30_fft/tb/tb_fft.sv,$(IP_FFT),))
 $(eval $(call TB,tb_dsp_filter,ips/31_dsp_filter/tb/tb_dsp_filter.sv,$(IP_DSP_FILT),))
+$(eval $(call TB,tb_pka,ips/32_pka/tb/tb_pka.sv,$(IP_PKA),))
+$(eval $(call TB,tb_otp_trng_keymgr,ips/33_otp_trng_keymgr/tb/tb_otp_trng_keymgr.sv,$(IP_OTP_TRNG),))
+$(eval $(call TB,tb_mipi_csi2_rx,ips/34_mipi_csi2_rx/tb/tb_mipi_csi2_rx.sv,$(IP_CSI2),))
+$(eval $(call TB,tb_mipi_dsi_tx,ips/35_mipi_dsi_tx/tb/tb_mipi_dsi_tx.sv,$(IP_DSI),))
+$(eval $(call TB,tb_soc_sysctrl,ips/36_soc_sysctrl/tb/tb_soc_sysctrl.sv,$(IP_SYSCTRL),))
+$(eval $(call TB,tb_ipc_debug,ips/37_ipc_debug/tb/tb_ipc_debug.sv,$(IP_IPC_DBG),))
+$(eval $(call TB,tb_ddr_ctrl,ips/38_ddr_ctrl/tb/tb_ddr_ctrl.sv,$(IP_DDR),ips/38_ddr_ctrl/tb/tb_ddr_dram_model.sv))
+$(eval $(call TB,tb_serdes_combo,ips/39_serdes_combo/tb/tb_serdes_combo.sv,$(IP_SERDES),))
+$(eval $(call TB,tb_usb2_otg,ips/40_usb2_otg/tb/tb_usb2_otg.sv,$(IP_USB2),))
 
 # ---- APB fabric / retrofit testbenches (owner: apb) ----------------------------
 $(eval $(call TB,tb_apb_fabric,tb/tb_apb_fabric.sv,,))
@@ -246,7 +295,7 @@ endef
 # =============================================================================
 LINT_TARGETS := $(addprefix lint_,$(LINT_TOPS))
 
-.PHONY: all help list tables core lint lint_fast sim sim_jobs summary check_lists clean \
+.PHONY: all help list tables core lint lint_fast sim sim_jobs summary check_lists check_yosys clean \
         questa vcs xrun $(LINT_TARGETS) $(ALL_TBS)
 
 all: lint sim
@@ -325,6 +374,10 @@ check_lists:
 # regenerate the FuseSoC core from filelists + the tables above
 core:
 	python3 scripts/gen_fusesoc_core.py
+
+# static Yosys / OpenLane / ASIC synthesis compatibility check
+check_yosys:
+	python3 scripts/check_yosys_compat.py
 
 # ---- Other simulators (best effort, not runnable on the reference machine) -----
 # All TB sources are compiled together; tops are run one by one.

@@ -1,36 +1,35 @@
-# Streaming Cryptographic Accelerator (`28_crypto`)
+# Streaming Cryptographic Accelerator (`28_crypto` v2.0)
 
 ## Overview
 
-`28_crypto` is a clean-room, pure synthesizable IEEE 1800-2017 SystemVerilog cryptographic accelerator supporting **AES-128/192/256** (ECB, CBC, CTR) and **SHA-2** (**SHA-256/224** plus optional **SHA-512/384** and hardware **HMAC**). It provides a dual-path data interface — programmable **AXI-Stream-style 32-bit streaming ports** (`s_axis_*` / `m_axis_*`) for zero-copy DMA pipelines and **CSR FIFO registers** (`DIN`/`DINLAST`/`DOUT`) for polled CPU access — behind a unified **Quad-Bus CSR Slave** (`Wishbone B4`, `AMBA AXI4/AXI4-Lite`, `TileLink TL-UL/TL-UH`, and `AMBA APB4`).
+`28_crypto` is a clean-room, pure synthesizable IEEE 1800-2017 SystemVerilog cryptographic accelerator supporting **AES-128/192/256** (**ECB**, **CBC**, **CTR**, **GCM**, **XTS**), **SHA-2 / HMAC** (**SHA-256/224**, **SHA-512/384**), **ChaCha20 & RFC 8439 ChaCha20-Poly1305 AEAD**, and **FIPS 202 SHA-3 / Keccak** (**SHA3-256**, **SHA3-512**, **SHAKE128**, **SHAKE256**). It provides a dual-path data interface — programmable **AXI-Stream-style 32-bit streaming ports** (`s_axis_*` / `m_axis_*`) for zero-copy DMA pipelines and **CSR FIFO registers** (`DIN`/`DINLAST`/`DOUT`) for polled CPU access — behind a unified **Quad-Bus CSR Slave** (`Wishbone B4`, `AMBA AXI4/AXI4-Lite`, `TileLink TL-UL/TL-UH`, and `AMBA APB4`).
+
+All v2.0 engines (`GCM_EN`, `XTS_EN`, `CHACHA_EN`, `SHA3_EN`) and `SHA512_EN` are parameter-guarded so area-constrained microcontrollers can strip unused algorithms cleanly while preserving 100% register-level backward compatibility (`0x000..0x17C`).
 
 ### Features
 
-- **AES Engine (`aes_core` + `crypto_aes_eng`)**:
+- **AES Engine (`aes_core` + `ghash_core` + `crypto_aes_eng`)**:
   - Key sizes: **AES-128**, **AES-192**, **AES-256** (encrypt & decrypt).
   - Block/stream chaining modes: **ECB**, **CBC** (automatic IV update), and **CTR** (128-bit or 32-bit counter increment, arbitrary byte-length final block truncation, empty 0-byte pass-through).
+  - **AES-GCM (`GCM_EN = 1`, NIST SP 800-38D)**: Automatic `H = AES_K(0^128)`, `J0 = {IV[95:0], 32'h0000_0001}`, iterative 8-bit/cycle `GF(2^128)` `ghash_core` (`x^128 + x^7 + x^2 + x + 1`), AAD streaming phase (`AAD_LEN` bytes), GCTR payload phase (`0..N` bytes), automatic `{AAD_bits[63:0], CT_bits[63:0]}` length block, `TAG = GHASH ^ AES_K(J0)` in `TAG0..3`, and hardware constant-time tag comparison (`TAG_EXP0..3` -> `STATUS.TAG_OK` / `ERR.TAG_FAIL`).
+  - **AES-XTS (`XTS_EN = 1`, IEEE 1619 / NIST SP 800-38E)**: Dual-key (`KEY` = `Key1`, `TKEY` = `Key2`) for 128-bit and 256-bit XTS, initial `T0 = AES_K2(IV)` encryption, per-block `GF(2^128)` `alpha` multiply-by-`x` tweak update, and full **Ciphertext Stealing (CTS)** for non-16-byte-aligned sectors (`>= 16` bytes).
   - On-the-fly 8-word sliding-window key schedule (`fwd_step` / `bwd_step`) — no round-key SRAM required.
-  - Parameterizable area/throughput trade-off via `AES_ARCH`:
-    - `AES_ARCH = 0`: 1 round/clock (16 data S-boxes + 4 key S-boxes; 11/13/15 clocks per block).
-    - `AES_ARCH = 1`: 1 column/clock (4 data S-boxes + 4 key S-boxes shared across 4 sub-cycles; 41/49/57 clocks per block).
+  - Parameterizable area/throughput trade-off via `AES_ARCH` (`0`: 1 round/clock; `1`: 1 column/clock, 4x fewer data S-boxes).
+- **ChaCha20 & Poly1305 Engine (`chacha20_core` + `poly1305_core` + `crypto_chacha_eng`, `CHACHA_EN = 1`)**:
+  - **ChaCha20 (RFC 8439 Sec. 2.4)**: 256-bit `KEY`, 96-bit nonce (`IV0..2`), programmable 32-bit initial block counter (`CHACHA_CNT`), 20 ARX rounds (1 round/clock).
+  - **ChaCha20-Poly1305 AEAD (RFC 8439 Sec. 2.8)**: Automatic `ctr=0` Poly1305 one-time key (`r || s`) generation, `pad16(AAD)` + `ctr=1` payload encryption/decryption + `pad16(ciphertext)` + `{le64(AAD_LEN), le64(CT_LEN)}`, 8-bit/cycle `2^130 - 5` modular accumulator, 128-bit `TAG0..3`, and constant-time tag verification.
 - **SHA-2 & HMAC Engine (`sha256_core` + `sha512_core` + `crypto_sha_eng`)**:
   - **SHA-256** & **SHA-224** (64-round compression, 1 round/clock).
-  - Optional **SHA-512** & **SHA-384** enabled by `SHA512_EN = 1` (80-round compression, 1 round/clock; strip out with `SHA512_EN = 0` for small microcontrollers).
-  - Automatic **FIPS 180-4 padding** and bit-length appending (0-byte through multi-block messages).
-  - Automatic **HMAC** (`ipad = 0x36`, `opad = 0x5C`) in hardware from a write-only `HKEY` block (`0..64` bytes for SHA-224/256, `0..128` bytes for SHA-384/512).
-  - Digest readable via `DIGEST0..15` CSRs and/or streamed onto `m_axis_*` (`CTRL.DIG_FIFO = 1`).
-- **Stream & Host Interface (`crypto_core`)**:
-  - Synchronous input and output FIFOs (`IN_FIFO_DEPTH`, `OUT_FIFO_DEPTH`, default 16 words).
-  - Independent input/output byte-swap controls (`CTRL.BSWAP_IN`, `CTRL.BSWAP_OUT`).
-  - Level DMA request signals (`dma_in_req_o`, `dma_out_req_o`) with programmable watermarks (`FIFOCFG`) and automatic end-of-message flush (`last_cnt_q`).
-  - Interrupt output (`irq_o`) with sticky W1C event flags (`DONE`, `ERR`, `KEY_DONE`) and FIFO level sources.
-- **Security Controls**:
-  - `KEY0..7` and `HKEY0..31` registers are strictly **write-only** (reads always return `32'h0`).
-  - Synchronous `CMD.WIPE` command zeroes all key registers, HMAC key registers, IV, round-key schedule windows, internal state, and FIFOs immediately.
-  - Configuration registers (`CTRL`, `KEY*`, `HKEY*`, `IV*`, `HKLEN`) are locked while `BUSY` or `ARMED`; illegal writes set `ERR.BUSY_WR`.
-- **Non-Goals / Future Work**:
-  - **No TRNG**: Hardware true random number generation is intentionally omitted (cannot be physically validated in digital simulation) and planned as a separate future entropy IP.
-  - **AES-GCM (GHASH)**: Deferred to a future extension; ECB/CBC/CTR + HMAC-SHA2 cover authenticated encryption (Encrypt-then-MAC) today.
+  - Optional **SHA-512** & **SHA-384** enabled by `SHA512_EN = 1` (80-round compression, 1 round/clock).
+  - Automatic **FIPS 180-4 padding** and hardware **HMAC** (`ipad = 0x36`, `opad = 0x5C`) from write-only `HKEY0..31`.
+- **SHA-3 & Keccak XOF Engine (`keccak_core` + `crypto_sha3_eng`, `SHA3_EN = 1`, FIPS 202)**:
+  - 1600-bit `Keccak-f[1600]` permutation (24 rounds, 1 round/clock, `theta`/`rho`/`pi`/`chi`/`iota`).
+  - Supports **SHA3-256** (`0x06`), **SHA3-512** (`0x06`), **SHAKE128** (`0x1F`), and **SHAKE256** (`0x1F`) with arbitrary-length multi-block absorb and multi-block squeeze (`XOF_LEN` bytes via `DIG_FIFO = 1` and first up-to-64 bytes in `DIGEST0..15`).
+- **Stream, DMA, IRQ & Security Controls (`crypto_core`)**:
+  - Synchronous input/output FIFOs (`IN_FIFO_DEPTH`, `OUT_FIFO_DEPTH`), independent `BSWAP_IN`/`BSWAP_OUT`, level DMA requests (`dma_in_req_o`, `dma_out_req_o`), W1C IRQs.
+  - `KEY0..7`, `TKEY0..7`, and `HKEY0..31` are strictly **write-only** (reads always return `32'h0`).
+  - Synchronous `CMD.WIPE` zeroes all keys, tweak keys, HMAC keys, IV, expected tag, computed tags, internal engine states, and FIFOs immediately.
+  - **Non-Goals**: Hardware TRNG is intentionally omitted (planned as a separate entropy IP).
 
 ---
 
@@ -41,13 +40,16 @@ flowchart LR
   BUS["Quad-Bus Slave (WB / AXI4 / TL / APB)"] -->|"csr_req_t / csr_rsp_t"| CSR["CSR & Control FSM"]
   SAXIS["s_axis_t* (32b + tkeep + tlast)"] -->|"IN_AXIS=1"| INFIFO["Input Sync FIFO (36b x DEPTH)"]
   CSR -->|"IN_AXIS=0 (DIN / DINLAST)"| INFIFO
-  CSR -->|"WO KEY / HKEY / IV / CTRL"| AES["AES Engine (ARCH=0 or 1)"]
-  CSR -->|"WO HKEY / CTRL"| SHA["SHA-2 / HMAC Engine"]
-  INFIFO --> AES
-  INFIFO --> SHA
-  AES --> OUTFIFO["Output Sync FIFO (36b x DEPTH)"]
-  SHA -->|"DIG_FIFO=1"| OUTFIFO
-  SHA -->|"DIGEST0..15"| CSR
+  CSR -->|"WO KEY / TKEY / HKEY / IV / AAD_LEN / XOF_LEN"| ENG["Crypto Engines"]
+  INFIFO --> ENG
+  subgraph ENG["Crypto Engines"]
+    AES["AES + GHASH (ECB / CBC / CTR / GCM / XTS)"]
+    SHA2["SHA-2 / HMAC (224 / 256 / 384 / 512)"]
+    CC["ChaCha20 + Poly1305 AEAD (RFC 8439)"]
+    SHA3["Keccak-f1600 (SHA3-256 / 512 / SHAKE128 / 256)"]
+  end
+  ENG -->|"Ciphertext / Plaintext / XOF"| OUTFIFO["Output Sync FIFO (36b x DEPTH)"]
+  ENG -->|"DIGEST0..15 / TAG0..3 / TAG_OK"| CSR
   OUTFIFO -->|"OUT_AXIS=1"| MAXIS["m_axis_t* (32b + tkeep + tlast)"]
   OUTFIFO -->|"OUT_AXIS=0 (DOUT)"| CSR
   CSR --> IRQ["irq_o / dma_in_req_o / dma_out_req_o"]
@@ -59,14 +61,20 @@ flowchart LR
 
 | File | Role |
 | :--- | :--- |
-| [`crypto_pkg.sv`](../rtl/crypto_pkg.sv) | GF(2^8) math, elaboration-derived AES S-box/InvS-box, MixColumns, byte-swap helpers |
+| [`crypto_pkg.sv`](../rtl/crypto_pkg.sv) | GF(2^8) math, elaboration-derived AES S-box/InvS-box, MixColumns, `blk_mask`, `xts_mul_alpha`, byte-swap helpers |
 | [`crypto_sha_pkg.sv`](../rtl/crypto_sha_pkg.sv) | FIPS 180-4 round constants (`K256`, `K512`) and IVs (`H0_*`), generated by [`gen_sha_consts.py`](../tools/gen_sha_consts.py) |
 | [`aes_core.sv`](../rtl/aes_core.sv) | AES-128/192/256 block engine with sliding-window on-the-fly key schedule (`ARCH=0/1`) |
+| [`ghash_core.sv`](../rtl/ghash_core.sv) | Iterative 8-bit/cycle `GF(2^128)` GHASH multiplier (`x^128 + x^7 + x^2 + x + 1`, 16 clks/block) |
 | [`sha256_core.sv`](../rtl/sha256_core.sv) | SHA-256 / SHA-224 64-round compression core |
 | [`sha512_core.sv`](../rtl/sha512_core.sv) | SHA-512 / SHA-384 80-round compression core |
-| [`crypto_aes_eng.sv`](../rtl/crypto_aes_eng.sv) | AES message framer (ECB/CBC/CTR chaining, partial-block CTR, ALIGN/PROTO checks) |
+| [`chacha20_core.sv`](../rtl/chacha20_core.sv) | RFC 8439 ChaCha20 20-round ARX core (1 round/cycle) |
+| [`poly1305_core.sv`](../rtl/poly1305_core.sv) | RFC 8439 Poly1305 `2^130 - 5` modular accumulator (8-bit/cycle, 16 clks/chunk) |
+| [`keccak_core.sv`](../rtl/keccak_core.sv) | FIPS 202 `Keccak-f[1600]` permutation core (24 rounds, 1 round/cycle) |
+| [`crypto_aes_eng.sv`](../rtl/crypto_aes_eng.sv) | AES message engine (ECB / CBC / CTR / GCM / XTS+CTS, constant-time tag verify) |
 | [`crypto_sha_eng.sv`](../rtl/crypto_sha_eng.sv) | SHA-2 / HMAC message framer (auto padding, inner/outer HMAC passes) |
-| [`crypto_core.sv`](../rtl/crypto_core.sv) | Protocol-agnostic CSR register file, FIFOs, AXIS bridges, DMA/IRQ logic |
+| [`crypto_chacha_eng.sv`](../rtl/crypto_chacha_eng.sv) | ChaCha20 & ChaCha20-Poly1305 AEAD message engine |
+| [`crypto_sha3_eng.sv`](../rtl/crypto_sha3_eng.sv) | SHA3-256/512 & SHAKE128/256 message engine (`pad10*1`, multi-block absorb/squeeze) |
+| [`crypto_core.sv`](../rtl/crypto_core.sv) | Protocol-agnostic CSR register file (`0x000..0x2FF`), FIFOs, AXIS bridges, DMA/IRQ logic |
 | [`crypto_wb.sv`](../rtl/crypto_wb.sv) | Wishbone B4 slave wrapper (`wb_to_csr`) |
 | [`crypto_axi.sv`](../rtl/crypto_axi.sv) | AXI4 / AXI4-Lite slave wrapper (`axi_lite_to_csr`) |
 | [`crypto_tl.sv`](../rtl/crypto_tl.sv) | TileLink TL-UL / TL-UH device wrapper (`tl_ul_to_csr`) |
@@ -84,6 +92,10 @@ flowchart LR
 | `BUS_TYPE` | `bus_pkg::bus_proto_e` | `BUS_AXI4` | Slave CSR bus protocol: `BUS_WISHBONE` (0), `BUS_AXI4` (1), `BUS_TILELINK` (2), `BUS_APB` (3) |
 | `AES_ARCH` | `int unsigned` | `0` | `0`: 1 AES round/clock (fast); `1`: 1 column/clock (4 clocks/round, compact) |
 | `SHA512_EN` | `bit` | `1'b1` | `1`: include SHA-384/512 engine and 32-word `HKEY`; `0`: SHA-224/256 only |
+| `GCM_EN` | `bit` | `1'b1` | `1`: include `ghash_core` and AES-GCM mode |
+| `XTS_EN` | `bit` | `1'b1` | `1`: include IEEE 1619 AES-XTS + ciphertext stealing |
+| `CHACHA_EN` | `bit` | `1'b1` | `1`: include ChaCha20 & Poly1305 AEAD engine |
+| `SHA3_EN` | `bit` | `1'b1` | `1`: include `Keccak-f[1600]` SHA-3 & SHAKE128/256 engine |
 | `IN_FIFO_DEPTH` | `int unsigned` | `16` | Input FIFO depth in 32-bit words (`8..255`) |
 | `OUT_FIFO_DEPTH` | `int unsigned` | `16` | Output FIFO depth in 32-bit words (`8..255`) |
 
@@ -117,28 +129,42 @@ flowchart LR
 
 Base-relative byte offsets (`addr[11:0]`). Reads/writes to unmapped offsets return `csr_rsp_o.err = 1`.
 
+### Legacy v1.0 Registers (`0x000..0x17C`, 100% Preserved)
+
 | Offset | Name | Access | Reset | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `0x000` | `ID` | RO | `0xC8A0_0100` | Peripheral ID (`0xC8A0` crypto, rev `0x0100`) |
+| `0x000` | `ID` | RO | `0xC8A0_0100` | Peripheral ID (`0xC8A0` crypto, backward-compatible ID) |
 | `0x004` | `CAPS` | RO | param | Capability flags and FIFO depths |
 | `0x008` | `CTRL` | RW | `0x0000_0000` | Engine, mode, endianness, and stream configuration (locked when `BUSY/ARMED`) |
 | `0x00C` | `CMD` | WO/W1P | `0x0000_0000` | Control commands (`START`, `KEY_LOAD`, `WIPE`, `ABORT`); reads `0` |
-| `0x010` | `STATUS` | RO | `0x0000_0028` | Live engine and FIFO status (`IN_EMPTY=1`, `OUT_EMPTY=1`) |
+| `0x010` | `STATUS` | RO | `0x0000_0028` | Live engine, FIFO, and AEAD tag verification status |
 | `0x014` | `ERR` | RW1C | `0x0000_0000` | Sticky error flags (write `1` to clear) |
 | `0x018` | `IRQ_EN` | RW | `0x0000_0000` | Interrupt enable mask |
 | `0x01C` | `IRQ_ST` | RO/W1C | `0x0000_0000` | Interrupt status (`[2:0]` W1C events; `[4:3]` live FIFO levels) |
 | `0x020` | `FIFOCFG` | RW | `0x0000_0104` | DMA enables and FIFO watermarks (`IN_THR=4`, `OUT_THR=1`) |
 | `0x024` | `LASTB` | RW | `0x0000_0004` | Valid byte count (`0..4`) for next `DINLAST` write |
-| `0x028` | `MSGLEN` | RO | `0x0000_0000` | Message byte counter for current/last message |
+| `0x028` | `MSGLEN` | RO | `0x0000_0000` | Total input bytes consumed for current/last message |
 | `0x02C` | `DIN` | WO | `0x0000_0000` | CSR input FIFO write (4 valid bytes, `last=0`); active when `IN_AXIS=0` |
 | `0x030` | `DINLAST` | WO | `0x0000_0000` | CSR input FIFO write with `last=1` and `LASTB` valid bytes |
 | `0x034` | `DOUT` | RO | `0x0000_0000` | CSR output FIFO pop; active when `OUT_AXIS=0` |
 | `0x038` | `DOUTINF` | RO | `0x0000_0000` | Peek output FIFO head metadata (`VALID`, `LAST`, `NB`) without popping |
-| `0x040..0x05C` | `KEY0..KEY7` | WO | `0x0000_0000` | AES key words (big-endian word order; `KEY0..3` for 128b, `0..5` for 192b, `0..7` for 256b); reads `0` |
-| `0x060..0x06C` | `IV0..IV3` | RW | `0x0000_0000` | AES 128-bit IV / counter block (auto-updated on CBC/CTR block completion) |
+| `0x040..0x05C` | `KEY0..KEY7` | WO | `0x0000_0000` | Primary key words (`AES` `KEY1`, `ChaCha20` 256-bit key); reads `0` |
+| `0x060..0x06C` | `IV0..IV3` | RW | `0x0000_0000` | AES IV/CTR/XTS tweak (`IV0..3`), or 96-bit GCM IV / ChaCha nonce (`IV0..2`) |
 | `0x070` | `HKLEN` | RW | `0x0000_0000` | HMAC key byte length (`0..64` for SHA-224/256; `0..128` for SHA-384/512) |
-| `0x080..0x0BC` | `DIGEST0..15` | RO | `0x0000_0000` | SHA-2 / HMAC output digest words (`0..7` SHA-256, `0..6` SHA-224, `0..15` SHA-512, `0..11` SHA-384) |
+| `0x080..0x0BC` | `DIGEST0..15` | RO | `0x0000_0000` | SHA-2 / HMAC / SHA-3 / SHAKE output digest words (first up-to-64 bytes) |
 | `0x100..0x17C` | `HKEY0..31` | WO | `0x0000_0000` | HMAC key words (`0x100..0x13C` if `SHA512_EN=0`, `0x100..0x17C` if `SHA512_EN=1`); reads `0` |
+
+### v2.0 Extension Registers (`0x180..0x2FF`)
+
+| Offset | Name | Access | Reset | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x180` | `VERSION` | RO | `0x0002_0000` | IP revision (`2.0.0`) |
+| `0x184` | `AAD_LEN` | RW | `0x0000_0000` | AEAD AAD byte length for AES-GCM and ChaCha20-Poly1305 (locked when busy; wiped on `WIPE`) |
+| `0x188` | `XOF_LEN` | RW | `0x0000_0000` | SHAKE128/256 squeeze output byte count (`0` defaults to `32` for SHAKE128, `64` for SHAKE256) |
+| `0x18C` | `CHACHA_CNT` | RW | `0x0000_0000` | Initial 32-bit block counter for standalone ChaCha20 (`POLY_EN=0`) |
+| `0x190..0x19C` | `TAG0..TAG3` | RO | `0x0000_0000` | Computed 128-bit AEAD authentication tag (GCM / ChaCha20-Poly1305; respects `BSWAP_OUT`) |
+| `0x1A0..0x1AC` | `TAG_EXP0..3` | RW | `0x0000_0000` | Expected 128-bit AEAD tag for hardware constant-time verify (`TAG_CHK=1`; respects `BSWAP_IN`) |
+| `0x1B0..0x1CC` | `TKEY0..TKEY7` | WO | `0x0000_0000` | XTS tweak key `Key2` (`TKEY0..3` for XTS-128, `0..7` for XTS-256); reads `0`, wiped on `WIPE` |
 
 ### Key Bit-Field Definitions
 
@@ -146,8 +172,11 @@ Base-relative byte offsets (`addr[11:0]`). Reads/writes to unmapped offsets retu
 | Bits | Field | Description |
 | :--- | :--- | :--- |
 | `0` | `SHA512_EN` | `1` if SHA-384/512 engine is compiled in |
-| `1` | `GCM_EN` | `0` (GCM not implemented; future extension) |
+| `1` | `GCM_EN` | `1` if AES-GCM (`ghash_core`) is compiled in |
 | `2` | `AES_ARCH` | `0`: 1 round/clk, `1`: 1 column/clk (4-cycle S-box shared) |
+| `3` | `XTS_EN` | `1` if IEEE 1619 AES-XTS is compiled in |
+| `4` | `CHACHA_EN` | `1` if ChaCha20 & Poly1305 AEAD is compiled in |
+| `5` | `SHA3_EN` | `1` if `Keccak-f[1600]` SHA-3 / SHAKE is compiled in |
 | `15:8` | `IN_DEPTH` | `IN_FIFO_DEPTH` |
 | `23:16` | `OUT_DEPTH` | `OUT_FIFO_DEPTH` |
 | `24` | `HAS_DMA` | `1` |
@@ -156,26 +185,29 @@ Base-relative byte offsets (`addr[11:0]`). Reads/writes to unmapped offsets retu
 #### `CTRL` (`0x008`, RW — locked while `STATUS.BUSY` or `STATUS.ARMED`)
 | Bits | Field | Values |
 | :--- | :--- | :--- |
-| `0` | `AUTO_REARM` | `1`: auto-restart next message on `tlast`/`DINLAST` completion without re-writing `CMD.START` |
-| `2:1` | `MODE` | `0`: AES, `1`: SHA-2 / HMAC (`2..3`: reserved -> `BADCFG`) |
-| `4:3` | `KEYLEN` | `0`: 128-bit, `1`: 192-bit, `2`: 256-bit (`3`: invalid -> `BADCFG`) |
-| `5` | `DEC` | AES direction (`0`: encrypt, `1`: decrypt; ignored in CTR) |
-| `7:6` | `CHAIN` | AES mode (`0`: ECB, `1`: CBC, `2`: CTR; `3`: invalid -> `BADCFG`) |
+| `0` | `AUTO_REARM` | `1`: auto-restart next message on `tlast`/`DINLAST` completion |
+| `2:1` | `MODE` | `0`: AES, `1`: SHA-2 / HMAC, `2`: ChaCha20 / ChaCha20-Poly1305, `3`: SHA-3 / SHAKE |
+| `4:3` | `KEYLEN` | `0`: 128-bit, `1`: 192-bit (not valid for XTS), `2`: 256-bit (`3`: invalid -> `BAD_CFG`) |
+| `5` | `DEC` | Direction (`0`: encrypt, `1`: decrypt; used by ECB/CBC/GCM/XTS/ChaCha-Poly) |
+| `7:6` | `CHAIN` | AES mode when `XTS_MODE=0`: `0`: ECB, `1`: CBC, `2`: CTR, `3`: GCM |
 | `8` | `CTR32` | CTR increment width (`0`: full 128-bit counter, `1`: low 32-bit counter wrap) |
-| `10:9` | `SHA_ALG` | `0`: SHA-256, `1`: SHA-224, `2`: SHA-512, `3`: SHA-384 |
-| `11` | `HMAC_EN` | `1`: compute HMAC using `HKEY` and `HKLEN` |
+| `10:9` | `SHA_ALG` | `MODE=1`: `0`=SHA256, `1`=SHA224, `2`=SHA512, `3`=SHA384; `MODE=3`: `0`=SHA3-256, `1`=SHA3-512, `2`=SHAKE128, `3`=SHAKE256 |
+| `11` | `HMAC_EN` | `1`: compute HMAC using `HKEY` and `HKLEN` (`MODE=1`) |
 | `12` | `BSWAP_IN` | `0`: little-endian host words (byte 0 in `[7:0]`); `1`: big-endian/network order (byte 0 in `[31:24]`) |
-| `13` | `BSWAP_OUT` | `0`: little-endian host words on `DOUT`/`IV`/`DIGEST`/`m_axis`; `1`: big-endian/network order |
+| `13` | `BSWAP_OUT` | `0`: little-endian host words on `DOUT`/`IV`/`DIGEST`/`TAG`/`m_axis`; `1`: big-endian/network order |
 | `14` | `IN_AXIS` | `0`: input via `DIN`/`DINLAST`; `1`: input via `s_axis_*` |
 | `15` | `OUT_AXIS` | `0`: output via `DOUT`; `1`: output via `m_axis_*` |
-| `16` | `DIG_FIFO` | `1`: also push SHA/HMAC digest words onto output FIFO / `m_axis_*` |
+| `16` | `DIG_FIFO` | `1`: also push SHA-2 / HMAC / SHA-3 / SHAKE output bytes onto output FIFO / `m_axis_*` |
+| `17` | `XTS_MODE` | `1`: select AES-XTS when `MODE=0` and `CHAIN=0` (`KEYLEN` `0` or `2`) |
+| `18` | `POLY_EN` | `1`: enable RFC 8439 ChaCha20-Poly1305 AEAD when `MODE=2` (`0`: standalone ChaCha20) |
+| `19` | `TAG_CHK` | `1`: enable hardware constant-time verification of `TAG0..3` against `TAG_EXP0..3` |
 
 #### `CMD` (`0x00C`, WO/W1P)
 | Bit | Field | Effect |
 | :--- | :--- | :--- |
-| `0` | `START` | Arm selected engine; if AES key schedule is dirty/mismatched, runs key setup automatically first |
+| `0` | `START` | Arm selected engine; if `MODE=0` and AES key schedule is dirty/mismatched, runs key setup first |
 | `1` | `KEY_LOAD` | Pre-compute AES decryption final key window (`dk_q`) without starting a message |
-| `2` | `WIPE` | Highest priority: immediately zero `KEY`, `HKEY`, `IV`, key schedule state, and flush both FIFOs |
+| `2` | `WIPE` | Highest priority: zero `KEY`, `TKEY`, `HKEY`, `IV`, `TAG_EXP`, `TAG`, schedules, engine states, FIFOs |
 | `3` | `ABORT` | Abort active operation and flush both FIFOs (preserves keys/IV) |
 
 #### `STATUS` (`0x010`, RO)
@@ -189,55 +221,46 @@ Base-relative byte offsets (`addr[11:0]`). Reads/writes to unmapped offsets retu
 | `5` | `OUT_FULL` | Output FIFO full |
 | `6` | `OUT_EMPTY` | Output FIFO empty |
 | `7` | `ARMED` | Message is armed / running |
+| `8` | `TAG_VALID` | `1` when AEAD tag in `TAG0..3` is valid (cleared on `START`, `WIPE`, `ABORT`) |
+| `9` | `TAG_OK` | `1` when `TAG_CHK=1` passed constant-time verify (`TAG == TAG_EXP`) |
 | `23:16` | `IN_LEVEL` | Current input FIFO occupancy (words) |
 | `31:24` | `OUT_LEVEL` | Current output FIFO occupancy (words) |
 
 #### `ERR` (`0x014`, RW1C)
 | Bit | Flag | Cause |
 | :--- | :--- | :--- |
-| `0` | `NO_KEY` | `CMD.START` (AES) or `CMD.KEY_LOAD` issued with no key loaded |
-| `1` | `ALIGN` | AES ECB/CBC message length is not a multiple of 16 bytes (message aborted) |
-| `2` | `PROTO` | Non-last word with `tkeep != 4'hF`, or CSR `DIN`/`DOUT` access while `IN_AXIS`/`OUT_AXIS=1` |
-| `3` | `BAD_CFG` | Invalid `MODE`/`KEYLEN`/`CHAIN`, `SHA-384/512` with `SHA512_EN=0`, or `HKLEN > block_size` |
-| `4` | `BUSY_WR` | Attempted write to `CTRL`/`KEY`/`HKEY`/`IV`/`HKLEN`/`CMD.START`/`CMD.KEY_LOAD` while busy |
+| `0` | `NO_KEY` | `CMD.START` (`MODE=0/2`) or `CMD.KEY_LOAD` issued with no key loaded |
+| `1` | `ALIGN` | AES ECB/CBC message not a multiple of 16B, or AES-XTS message `< 16B` |
+| `2` | `PROTO` | Non-last word with `tkeep != 4'hF`, AAD length mismatch on `last`, or `DIN`/`DOUT` access in AXIS mode |
+| `3` | `BAD_CFG` | Invalid `MODE`/`KEYLEN`/`CHAIN`, disabled feature flag invoked, XTS with 192b key, or `HKLEN > block_size` |
+| `4` | `BUSY_WR` | Attempted write to locked configuration registers or `CMD.START`/`KEY_LOAD` while busy |
 | `5` | `IN_OVF` | CSR `DIN`/`DINLAST` written when input FIFO full |
 | `6` | `OUT_UNF` | CSR `DOUT` read when output FIFO empty |
-
-#### `IRQ_EN` (`0x018`, RW) & `IRQ_ST` (`0x01C`, RO/W1C)
-| Bit | Name | Type | Description |
-| :--- | :--- | :--- | :--- |
-| `0` | `DONE` | W1C | Message completed |
-| `1` | `ERR` | W1C | One or more error flags asserted |
-| `2` | `KEY_DONE` | W1C | AES key schedule setup completed |
-| `3` | `IN_SPACE` | RO | Input FIFO free slots `>= IN_THR` (and not full) |
-| `4` | `OUT_AVAIL` | RO | Output FIFO non-empty and (`level >= OUT_THR` or `last` word present) |
-
-#### `FIFOCFG` (`0x020`, RW) & `DOUTINF` (`0x038`, RO)
-- `FIFOCFG[7:0]`: `IN_THR` (reset `4`; `0` treated as `1`)
-- `FIFOCFG[15:8]`: `OUT_THR` (reset `1`; `0` treated as `1`)
-- `FIFOCFG[16]`: `DMA_IN_EN`, `FIFOCFG[17]`: `DMA_OUT_EN`
-- `DOUTINF[2:0]`: `NB` (valid bytes in head word), `[3]`: `LAST`, `[4]`: `VALID` (`!OUT_EMPTY`)
+| `7` | `TAG_FAIL` | `CTRL.TAG_CHK=1` failed (`TAG != TAG_EXP`) at end of AEAD decryption/authentication |
 
 ---
 
 ## Protocol & Timing Diagrams
 
-### AXI-Stream Message Framing (`IN_AXIS=1, OUT_AXIS=1`)
+### AEAD Streaming Framing (AES-GCM & ChaCha20-Poly1305)
+
+1. Program `AAD_LEN` (`0x184`) with the exact AAD byte count (`0` if none).
+2. Stream `ceil(AAD_LEN / 4)` words of AAD first (unused trailing bytes in the final AAD word are masked/zeroed by hardware), followed immediately by payload words starting on the next 32-bit word with `tlast=1`/`DINLAST` on the final payload word.
+   - If `AAD_LEN > 0` and payload is `0` bytes, either assert `tlast=1` on the final AAD word (with `tkeep` matching `AAD_LEN % 4`) or send a trailing `{tkeep=0, tlast=1}` null beat.
+   - If `AAD_LEN == 0` and payload is `0` bytes, send a single `{tkeep=0, tlast=1}` null beat.
+3. Hardware suppresses output during AAD, emits only payload ciphertext/plaintext words on `m_axis_*` / `DOUT`, latches `TAG0..3`, and evaluates `STATUS.TAG_OK` / `ERR.TAG_FAIL` when `CTRL.TAG_CHK=1`.
 
 ```text
 clk_i         : _/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_/‾\_
 s_axis_tvalid : ___/‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\_____________
-s_axis_tready : ___/‾‾‾‾‾‾‾‾‾‾‾‾‾\_/‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-s_axis_tdata  :    [ W0 ][ W1 ][ W2 ][ W3 ][ W4 ]  (W4 = partial)
-s_axis_tkeep  :    [ F  ][ F  ][ F  ][ F  ][ 3 ]  (2 bytes valid)
+s_axis_tdata  :    [AAD0][AAD1][PT0 ][PT1 ][PT2 ] (AAD_LEN=8)
+s_axis_tkeep  :    [ F  ][ F  ][ F  ][ F  ][ 3  ]
 s_axis_tlast  : _______________________/‾‾‾‾‾‾‾\_____________
-m_axis_tvalid : ___________________________/‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\_
-m_axis_tready : ___________________________/‾‾‾‾\_/‾‾‾‾‾‾‾‾\_
-m_axis_tlast  : _____________________________________/‾‾‾‾‾\_
+m_axis_tvalid : ___________________________/‾‾‾‾‾‾‾‾‾‾‾‾‾‾\_
+m_axis_tdata  :                            [CT0 ][CT1 ][CT2 ]
+m_axis_tlast  : ___________________________________/‾‾‾‾‾‾\_
+STATUS.TAG_VLD: ___________________________________________/‾
 ```
-
-- Non-last words must have `s_axis_tkeep == 4'b1111`; only `0000`, `0001`, `0011`, `0111`, `1111` are valid on `tlast`.
-- An empty 0-byte message (valid for SHA/HMAC and AES-CTR) is signalled by a single beat with `s_axis_tlast = 1, s_axis_tkeep = 4'b0000`.
 
 ---
 
@@ -246,48 +269,75 @@ m_axis_tlast  : _____________________________________/‾‾‾‾‾\_
 ### 1. AES-128 CBC Encrypt via AXI-Stream + DMA
 
 ```c
-// 1. Write 128-bit key (little-endian host words, BSWAP_IN=0) and IV
 for (int i = 0; i < 4; i++) REG_WRITE(CRYPTO_KEY0 + 4*i, key[i]);
 for (int i = 0; i < 4; i++) REG_WRITE(CRYPTO_IV0  + 4*i, iv[i]);
-
-// 2. Configure: AES, 128b, Encrypt, CBC, IN_AXIS=1, OUT_AXIS=1
 REG_WRITE(CRYPTO_CTRL, (0 << 1) | (0 << 3) | (0 << 5) | (1 << 6) | (1 << 14) | (1 << 15));
-REG_WRITE(CRYPTO_FIFOCFG, (1 << 17) | (1 << 16) | (1 << 8) | 4); // DMA_IN/OUT_EN
-REG_WRITE(CRYPTO_CMD, 1 << 0); // START (runs key setup automatically if dirty)
-
-// 3. DMA streams N*16 bytes into s_axis_* (final beat tlast=1) and drains m_axis_*
-while (REG_READ(CRYPTO_STATUS) & (1 << 7)) { /* wait ARMED == 0 */ }
-// Next CBC call inherits updated IV automatically, or read CRYPTO_IV0..3
+REG_WRITE(CRYPTO_FIFOCFG, (1 << 17) | (1 << 16) | (1 << 8) | 4);
+REG_WRITE(CRYPTO_CMD, 1 << 0);
+while (REG_READ(CRYPTO_STATUS) & (1 << 7)) {}
 ```
 
-### 2. HMAC-SHA256 via CSR Polling
+### 2. AES-256-GCM Authenticated Decrypt with Constant-Time Tag Verification
 
 ```c
-// 1. Configure CTRL first so BSWAP_IN applies to HKEY writes
-//    SHA mode, SHA-256, HMAC=1, BSWAP_IN=1, BSWAP_OUT=1 (big-endian byte order)
-REG_WRITE(CRYPTO_CTRL, (1 << 1) | (0 << 9) | (1 << 11) | (1 << 12) | (1 << 13));
-
-// 2. Write HMAC key (up to 64 bytes) and byte length
-for (int i = 0; i < (klen + 3) / 4; i++) REG_WRITE(CRYPTO_HKEY0 + 4*i, hkey_words[i]);
-REG_WRITE(CRYPTO_HKLEN, klen);
+// MODE=0 (AES), KEYLEN=2 (256b), DEC=1, CHAIN=3 (GCM), BSWAP_IN/OUT=1, AXIS=1, TAG_CHK=1
+REG_WRITE(CRYPTO_CTRL, (0 << 1) | (2 << 3) | (1 << 5) | (3 << 6) |
+                       (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15) | (1 << 19));
+for (int i = 0; i < 8; i++) REG_WRITE(CRYPTO_KEY0     + 4*i, key[i]);
+for (int i = 0; i < 3; i++) REG_WRITE(CRYPTO_IV0      + 4*i, iv96[i]);
+for (int i = 0; i < 4; i++) REG_WRITE(CRYPTO_TAG_EXP0 + 4*i, expected_tag[i]);
+REG_WRITE(CRYPTO_AAD_LEN, aad_bytes);
 REG_WRITE(CRYPTO_CMD, 1 << 0); // START
 
-// 3. Push message words; set LASTB before final word
-for (int i = 0; i < nwords - 1; i++) {
-  while (REG_READ(CRYPTO_STATUS) & (1 << 3)) {} // wait !IN_FULL
-  REG_WRITE(CRYPTO_DIN, msg_words[i]);
-}
-REG_WRITE(CRYPTO_LASTB, final_valid_bytes);
-REG_WRITE(CRYPTO_DINLAST, msg_words[nwords - 1]);
-
+// Stream AAD words then ciphertext words (tlast=1); drain plaintext from m_axis
 while (REG_READ(CRYPTO_STATUS) & (1 << 0)) {} // wait !BUSY
-for (int i = 0; i < 8; i++) mac[i] = REG_READ(CRYPTO_DIGEST0 + 4*i);
+uint32_t st = REG_READ(CRYPTO_STATUS);
+if (!(st & (1 << 9))) { /* TAG_OK == 0 -> discard plaintext! */ }
 ```
 
-### 3. Secure Key Zeroization (`WIPE`)
+### 3. AES-128-XTS Flash Sector Encryption
 
 ```c
-REG_WRITE(CRYPTO_CMD, 1 << 2); // CMD.WIPE: clears KEY, HKEY, IV, schedules, FIFOs
+// MODE=0, KEYLEN=0 (128b), DEC=0, CHAIN=0, XTS_MODE=1, BSWAP_IN/OUT=1, AXIS=1
+REG_WRITE(CRYPTO_CTRL, (1 << 17) | (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15));
+for (int i = 0; i < 4; i++) REG_WRITE(CRYPTO_KEY0  + 4*i, key1[i]);
+for (int i = 0; i < 4; i++) REG_WRITE(CRYPTO_TKEY0 + 4*i, key2[i]);
+for (int i = 0; i < 4; i++) REG_WRITE(CRYPTO_IV0   + 4*i, sector_tweak[i]);
+REG_WRITE(CRYPTO_CMD, 1 << 0);
+// Stream >= 16 bytes (arbitrary length >= 16B supported via CTS)
+```
+
+### 4. RFC 8439 ChaCha20-Poly1305 AEAD Encrypt
+
+```c
+// MODE=2 (ChaCha), POLY_EN=1, BSWAP_IN/OUT=1, AXIS=1
+REG_WRITE(CRYPTO_CTRL, (2 << 1) | (1 << 18) | (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15));
+for (int i = 0; i < 8; i++) REG_WRITE(CRYPTO_KEY0 + 4*i, key[i]);
+for (int i = 0; i < 3; i++) REG_WRITE(CRYPTO_IV0  + 4*i, nonce96[i]);
+REG_WRITE(CRYPTO_AAD_LEN, aad_bytes);
+REG_WRITE(CRYPTO_CMD, 1 << 0);
+while (REG_READ(CRYPTO_STATUS) & (1 << 0)) {}
+for (int i = 0; i < 4; i++) tag[i] = REG_READ(CRYPTO_TAG0 + 4*i);
+```
+
+### 5. Multi-Block SHAKE256 XOF Stream
+
+```c
+// MODE=3 (SHA-3), SHA_ALG=3 (SHAKE256), BSWAP_IN/OUT=1, AXIS=1, DIG_FIFO=1
+REG_WRITE(CRYPTO_CTRL, (3 << 1) | (3 << 9) | (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15) | (1 << 16));
+REG_WRITE(CRYPTO_XOF_LEN, 200); // squeeze 200 bytes onto m_axis
+REG_WRITE(CRYPTO_CMD, 1 << 0);
+```
+
+### 6. HMAC-SHA256 & Secure Key Zeroization (`WIPE`)
+
+```c
+REG_WRITE(CRYPTO_CTRL, (1 << 1) | (0 << 9) | (1 << 11) | (1 << 12) | (1 << 13));
+for (int i = 0; i < (klen + 3) / 4; i++) REG_WRITE(CRYPTO_HKEY0 + 4*i, hkey_words[i]);
+REG_WRITE(CRYPTO_HKLEN, klen);
+REG_WRITE(CRYPTO_CMD, 1 << 0);
+// ... feed DIN / DINLAST, wait !BUSY, read DIGEST0..7 ...
+REG_WRITE(CRYPTO_CMD, 1 << 2); // CMD.WIPE: zeroes KEY, TKEY, HKEY, IV, TAG_EXP, TAG, FIFOs
 ```
 
 ---
@@ -295,23 +345,22 @@ REG_WRITE(CRYPTO_CMD, 1 << 2); // CMD.WIPE: clears KEY, HKEY, IV, schedules, FIF
 ## Integration & FPGA/ASIC Notes
 
 - **Single Clock Domain**: All logic runs on `clk_i` with asynchronous active-low `rst_ni`. When integrating across clock domains, insert `common/rtl/async_fifo` on AXIS streams or an asynchronous bus bridge.
-- **Area vs. Throughput**:
-  - For area-constrained MCUs, set `AES_ARCH = 1` (4x fewer data S-boxes) and `SHA512_EN = 0` (removes 64-bit SHA-512/384 datapath and halves `HKEY` storage to 512 bits).
-  - For DMA throughput, set `AES_ARCH = 0` (1 round/clock).
-- **Side-Channel Note**: This RTL is a functional/synthesizable cryptographic engine and does not implement masked S-boxes or dual-rail precharge logic; treat it as unmasked against differential power analysis (DPA).
+- **Area vs. Feature Stripping**:
+  - For minimal MCU footprints, set `AES_ARCH=1` and disable unused extensions (`SHA512_EN=0`, `GCM_EN=0`, `XTS_EN=0`, `CHACHA_EN=0`, `SHA3_EN=0`). All disabled modes compile out via `generate` blocks and cleanly report `0` in `CAPS` and raise `ERR.BAD_CFG` if invoked.
+- **Side-Channel Note**: AEAD tag comparison (`TAG == TAG_EXP`) is performed in constant time using a full 128-bit XOR-reduction tree without early exit. However, AES S-boxes and arithmetic cores are unmasked against differential power analysis (DPA).
 
 ---
 
 ## Verification Summary
 
-Testbench: [`tb_crypto.sv`](../tb/tb_crypto.sv) (Verilator 5.054 `-Wall` clean, 0 warnings).
+Testbenches: [`tb_crypto.sv`](../tb/tb_crypto.sv) (v1.0 backward compatibility, unmodified) and [`tb_crypto_v2.sv`](../tb/tb_crypto_v2.sv) (v2.0 full suite), both Verilator 5.054 `-Wall` clean with 0 warnings.
 
 | Check Category | Coverage | Reference |
 | :--- | :--- | :--- |
-| **AES Block KATs** | AES-128, AES-192, AES-256 encrypt & decrypt on both `AES_ARCH=0` (AXI4) and `AES_ARCH=1` (WB) | NIST FIPS-197 Appendix B/C |
-| **AES Chaining KATs** | 4-block CBC & CTR encrypt/decrypt, IV updates, partial-block CTR, 0B CTR, `CTR32` wrap, `AUTO_REARM` | NIST SP 800-38A |
-| **SHA-2 & Padding Edges** | SHA-224/256/384/512 at `0, 3, 55, 56, 63, 64, 111, 112, 119, 120, 127, 128` bytes + `DIG_FIFO` stream | FIPS 180-4 / Python `hashlib` |
-| **HMAC KATs** | RFC 4231 TC1 (224/256/384/512) & TC2 (256), 0B/64B/128B key edge lengths | RFC 4231 / Python `hmac` |
-| **Quad-Bus & Parameters** | `BUS_AXI4`, `BUS_WISHBONE` (`ARCH=1, SHA512_EN=0`), `BUS_TILELINK`, `BUS_APB` (`pstrb`, `pslverr`) | `tb_bfm_tasks` + APB BFM |
-| **Stream, DMA, IRQ, Security** | Random AXIS `tvalid`/`tready` backpressure, `BSWAP_IN`/`OUT`, DMA watermarks (`>depth`), W1C IRQs, WO key readback=`0`, mid-op `CMD.WIPE`, all 7 `ERR` bits | Directed assertions |
-| **Constrained-Random** | Randomized AES (128/192/256, ECB/CBC/CTR, enc/dec, byte swaps, stalls) & SHA/HMAC (`+seed=`) | Independent SV byte-oriented golden model |
+| **v1.0 Backward Compatibility** | Full `tb_crypto` suite unmodified (AES-128/192/256 ECB/CBC/CTR, SHA-224/256/384/512, HMAC, quad-bus, errors, random) | FIPS-197 / SP 800-38A / FIPS 180-4 / RFC 4231 |
+| **AES-GCM KATs & Tamper** | NIST SP 800-38D TC1/TC2/TC4 (AES-128), AES-192 AAD-only, TC16 (AES-256 on `AES_ARCH=1`), HW `TAG_OK` & `ERR.TAG_FAIL` | NIST SP 800-38D |
+| **AES-XTS KATs & CTS** | IEEE 1619 XTS-AES-128 Vector 1, XTS-AES-256 (`AES_ARCH=1`), 23B Ciphertext Stealing (CTS) enc/dec, `< 16B` `ERR.ALIGN`, `TKEY` WO | IEEE 1619 / SP 800-38E |
+| **ChaCha20 & Poly1305 AEAD** | RFC 8439 Sec 2.4.2 ChaCha20 stream, Sec 2.8.2 ChaCha20-Poly1305 AEAD, 0B PT AAD-only, HW `TAG_OK` & `ERR.TAG_FAIL` | RFC 8439 |
+| **SHA-3 & SHAKE XOF** | SHA3-256, SHA3-512, SHAKE128, SHAKE256 (`0B`, `"abc"`, rate-edge lengths `71/72/136/169`, 200B multi-block squeeze) | FIPS 202 / Python `hashlib` |
+| **Parameter Stripping & Security** | `GCM_EN=XTS_EN=CHACHA_EN=SHA3_EN=0` (`CAPS` + `ERR.BAD_CFG`), `CMD.WIPE` zeroization of all v2 CSRs & states | Directed assertions |
+| **Constrained-Random (`+seed=`)** | Randomized AES-GCM, AES-XTS (+CTS), ChaCha20/Poly1305, SHA3/SHAKE across `BSWAP_IN/OUT` and AXIS stalls | Independent SV byte-oriented golden models |

@@ -1,10 +1,16 @@
 ips/28_crypto/rtl/crypto_pkg.sv
 ips/28_crypto/rtl/crypto_sha_pkg.sv
 ips/28_crypto/rtl/aes_core.sv
+ips/28_crypto/rtl/ghash_core.sv
 ips/28_crypto/rtl/sha256_core.sv
 ips/28_crypto/rtl/sha512_core.sv
+ips/28_crypto/rtl/chacha20_core.sv
+ips/28_crypto/rtl/poly1305_core.sv
+ips/28_crypto/rtl/keccak_core.sv
 ips/28_crypto/rtl/crypto_aes_eng.sv
 ips/28_crypto/rtl/crypto_sha_eng.sv
+ips/28_crypto/rtl/crypto_chacha_eng.sv
+ips/28_crypto/rtl/crypto_sha3_eng.sv
 ips/28_crypto/rtl/crypto_core.sv
 ips/28_crypto/rtl/crypto_wb.sv
 ips/28_crypto/rtl/crypto_axi.sv

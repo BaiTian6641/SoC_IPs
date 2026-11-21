@@ -5,7 +5,7 @@ This collection is organized into three strictly layered tiers written in pure s
 1. **Common Infrastructure (`common/`)**
    - [`common/pkg/bus_pkg.sv`](../common/pkg/bus_pkg.sv): Standardized 32-bit packed request/response structs (`wb_m2s_t`/`wb_s2m_t`, `axi4_m2s_t`/`axi4_s2m_t`, `tl_m2s_t`/`tl_s2m_t`, `apb_m2s_t`/`apb_s2m_t`, `APB_S2M_IDLE`), protocol selector enum `bus_proto_e` (`BUS_WISHBONE`, `BUS_AXI4`, `BUS_TILELINK`, `BUS_APB`), AXI response constants (`AXI_RESP_DECERR`, etc.), and burst address helpers (`axi_next_addr`, `axi_crosses_4kb`, `wb_next_addr`).
    - [`common/pkg/ip_common_pkg.sv`](../common/pkg/ip_common_pkg.sv): Shared peripheral definitions and constants.
-   - `common/rtl/`: Synthesizable primitives shared across interconnect and peripherals — `skid_buffer.sv` (zero-bubble forward/backward pipeline register), `rr_arbiter.sv` (QoS priority + bubble-safe lock retention + `AGING_MAX` anti-starvation promotion), `sync_fifo.sv`, `async_fifo.sv` (clock-only RAM writes, `ADDR_W>=1`), `crc_engine.sv`, and `edge_detect.sv`.
+   - `common/rtl/`: Synthesizable primitives shared across interconnect and peripherals — `skid_buffer.sv` (zero-bubble forward/backward pipeline register), `rr_arbiter.sv` (QoS priority + bubble-safe lock retention + `AGING_MAX` anti-starvation promotion), `sync_fifo.sv`, `async_fifo.sv` (clock-only RAM writes, `ADDR_W>=1`), `crc_engine.sv`, `edge_detect.sv`, and `common/rtl/tech/` (8 Yosys/FPGA/ASIC technology abstraction cells: `tech_icg`, `tech_cdc_sync`, `tech_rst_sync`, `tech_iddr`, `tech_oddr`, `tech_sram_sp`, `tech_sram_sdp`, `tech_serdes_io` — see [11 Yosys/FPGA/ASIC Guide](11_yosys_fpga_asic_guide.md)).
 
 2. **Interconnect, APB4, AXI-Stream, & Protocol Conversion (`interconnect/`)**
    - `interconnect/interfaces/`: SystemVerilog interfaces (`wb_if`, `axi4_if`, `tl_if`) exposing `master`/`slave` modports and `to_m2s()` / `to_s2m()` conversion helpers to pack/unpack structs cleanly at SoC boundaries.
@@ -17,12 +17,12 @@ This collection is organized into three strictly layered tiers written in pure s
    - `interconnect/crossbars/`: Protocol-native `M x N` non-blocking crossbars (`wb_xbar`, `axi4_xbar`, `tl_xbar`, `apb_xbar`) with QoS + aging arbitration, optional pipeline slices, and unmapped/error handling.
    - `interconnect/smart_switch/`: Heterogeneous any-to-any matrix (`smart_switch_interconnect`) plus 32 <-> 64-bit data width converters (`width_upsizer_downsizer`, `width_upsizer_32to64`).
 
-3. **Quad-Bus Peripheral, Memory, System, Graphics, DSP, & AI IPs (`ips/01..31`)**
+3. **Quad-Bus Peripheral, Memory, Security, Video, SerDes, & System IPs (`ips/01..40`)**
    - Every IP follows a modular split:
      - `*_core.sv` (+ helper submodules): Pure protocol-independent datapath, scratchpads/SRAMs, FSMs/sequencers, and CSR register file.
      - `*_{wb,axi,tl,apb}.sv`: Thin protocol wrappers instantiating the shared CSR slave and DMA master adapters from `interconnect/adapters/` (for `BUS_APB`, DMA-capable IPs expose their DMA master on `m_axi_o/m_axi_i` per the [APB DMA-master convention](06_apb_fabric_guide.md)).
      - `*_top.sv`: Unified top-level module parameterized by `BUS_TYPE` (`BUS_WISHBONE`, `BUS_AXI4`, `BUS_TILELINK`, `BUS_APB`) so integrators maintain one IP drop-in regardless of SoC fabric choice.
-   - Full catalog of all 31 IPs (`01`..`31`): [08 IP Catalog](08_ip_catalog.md).
+   - Full catalog of all 40 IPs (`01`..`40`) + `common/rtl/tech/` library: [08 IP Catalog](08_ip_catalog.md).
 
 ## Multi-Master / Multi-Slave Heterogeneous Dataflow
 

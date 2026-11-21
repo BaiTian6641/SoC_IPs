@@ -153,4 +153,30 @@ package crypto_pkg;
     endcase
   endfunction
 
+  // Top-nbytes mask of a 128-bit stream-order block (byte 0 at [127:120]).
+  function automatic logic [127:0] blk_mask(input logic [4:0] nbytes);
+    logic [127:0] m;
+    m = '0;
+    for (int i = 0; i < 16; i++) begin
+      if (5'(i) < nbytes) m[127 - 8*i -: 8] = 8'hff;
+    end
+    return m;
+  endfunction
+
+  // IEEE 1619 GF(2^128) multiply-by-alpha tweak update (byte 0 at [127:120]).
+  function automatic logic [127:0] xts_mul_alpha(input logic [127:0] t);
+    logic [127:0] r;
+    logic       cin, cout;
+    cin = 1'b0;
+    for (int j = 0; j < 16; j++) begin
+      logic [7:0] b;
+      b    = t[127 - 8*j -: 8];
+      cout = b[7];
+      r[127 - 8*j -: 8] = {b[6:0], cin};
+      cin  = cout;
+    end
+    if (cin) r[127:120] = r[127:120] ^ 8'h87;
+    return r;
+  endfunction
+
 endpackage : crypto_pkg

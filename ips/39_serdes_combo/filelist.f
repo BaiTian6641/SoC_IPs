@@ -1,0 +1,17 @@
+ips/39_serdes_combo/rtl/serdes_pkg.sv
+ips/39_serdes_combo/rtl/serdes_8b10b.sv
+ips/39_serdes_combo/rtl/serdes_128b130b.sv
+ips/39_serdes_combo/rtl/serdes_elastic_buf.sv
+ips/39_serdes_combo/rtl/serdes_prbs.sv
+ips/39_serdes_combo/rtl/serdes_pma_soft.sv
+ips/39_serdes_combo/rtl/serdes_pcs_core.sv
+ips/39_serdes_combo/rtl/serdes_pcie_link.sv
+ips/39_serdes_combo/rtl/serdes_usb3_link.sv
+ips/39_serdes_combo/rtl/serdes_sata_link.sv
+ips/39_serdes_combo/rtl/serdes_dp_tx.sv
+ips/39_serdes_combo/rtl/serdes_combo_core.sv
+ips/39_serdes_combo/rtl/serdes_combo_wb.sv
+ips/39_serdes_combo/rtl/serdes_combo_axi.sv
+ips/39_serdes_combo/rtl/serdes_combo_tl.sv
+ips/39_serdes_combo/rtl/serdes_combo_apb.sv
+ips/39_serdes_combo/rtl/serdes_combo_top.sv

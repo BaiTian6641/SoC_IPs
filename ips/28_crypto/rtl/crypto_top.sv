@@ -7,6 +7,10 @@ module crypto_top
   parameter bus_pkg::bus_proto_e BUS_TYPE = bus_pkg::BUS_AXI4,
   parameter int unsigned AES_ARCH       = 0,
   parameter bit          SHA512_EN      = 1'b1,
+  parameter bit          GCM_EN         = 1'b1,
+  parameter bit          XTS_EN         = 1'b1,
+  parameter bit          CHACHA_EN      = 1'b1,
+  parameter bit          SHA3_EN        = 1'b1,
   parameter int unsigned IN_FIFO_DEPTH  = 16,
   parameter int unsigned OUT_FIFO_DEPTH = 16
 ) (
@@ -48,6 +52,10 @@ module crypto_top
     crypto_wb #(
       .AES_ARCH       (AES_ARCH),
       .SHA512_EN      (SHA512_EN),
+      .GCM_EN         (GCM_EN),
+      .XTS_EN         (XTS_EN),
+      .CHACHA_EN      (CHACHA_EN),
+      .SHA3_EN        (SHA3_EN),
       .IN_FIFO_DEPTH  (IN_FIFO_DEPTH),
       .OUT_FIFO_DEPTH (OUT_FIFO_DEPTH)
     ) u_imp (
@@ -76,6 +84,10 @@ module crypto_top
     crypto_tl #(
       .AES_ARCH       (AES_ARCH),
       .SHA512_EN      (SHA512_EN),
+      .GCM_EN         (GCM_EN),
+      .XTS_EN         (XTS_EN),
+      .CHACHA_EN      (CHACHA_EN),
+      .SHA3_EN        (SHA3_EN),
       .IN_FIFO_DEPTH  (IN_FIFO_DEPTH),
       .OUT_FIFO_DEPTH (OUT_FIFO_DEPTH)
     ) u_imp (
@@ -104,6 +116,10 @@ module crypto_top
     crypto_apb #(
       .AES_ARCH       (AES_ARCH),
       .SHA512_EN      (SHA512_EN),
+      .GCM_EN         (GCM_EN),
+      .XTS_EN         (XTS_EN),
+      .CHACHA_EN      (CHACHA_EN),
+      .SHA3_EN        (SHA3_EN),
       .IN_FIFO_DEPTH  (IN_FIFO_DEPTH),
       .OUT_FIFO_DEPTH (OUT_FIFO_DEPTH)
     ) u_imp (
@@ -132,6 +148,10 @@ module crypto_top
     crypto_axi #(
       .AES_ARCH       (AES_ARCH),
       .SHA512_EN      (SHA512_EN),
+      .GCM_EN         (GCM_EN),
+      .XTS_EN         (XTS_EN),
+      .CHACHA_EN      (CHACHA_EN),
+      .SHA3_EN        (SHA3_EN),
       .IN_FIFO_DEPTH  (IN_FIFO_DEPTH),
       .OUT_FIFO_DEPTH (OUT_FIFO_DEPTH)
     ) u_imp (

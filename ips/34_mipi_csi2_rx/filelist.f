@@ -1,0 +1,11 @@
+ips/34_mipi_csi2_rx/rtl/csi2_pkg.sv
+ips/34_mipi_csi2_rx/rtl/csi2_ecc_crc.sv
+ips/34_mipi_csi2_rx/rtl/csi2_lane_merger.sv
+ips/34_mipi_csi2_rx/rtl/csi2_pixel_unpack.sv
+ips/34_mipi_csi2_rx/rtl/mipi_dphy_rx_soft.sv
+ips/34_mipi_csi2_rx/rtl/mipi_csi2_rx_core.sv
+ips/34_mipi_csi2_rx/rtl/mipi_csi2_rx_wb.sv
+ips/34_mipi_csi2_rx/rtl/mipi_csi2_rx_axi.sv
+ips/34_mipi_csi2_rx/rtl/mipi_csi2_rx_tl.sv
+ips/34_mipi_csi2_rx/rtl/mipi_csi2_rx_apb.sv
+ips/34_mipi_csi2_rx/rtl/mipi_csi2_rx_top.sv

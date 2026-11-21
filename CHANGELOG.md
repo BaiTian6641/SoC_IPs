@@ -2,6 +2,27 @@
 
 All notable changes to the SystemVerilog IP Core Collection are documented in this file.
 
+## [3.0.0] - 2026-11-21
+
+### Added
+- **Yosys / FPGA / ASIC Technology Abstraction Library (`common/rtl/tech/`)**:
+  - Added 8 synthesizable technology cells in `common/rtl/tech/filelist.f` (`tech_icg`, `tech_cdc_sync`, `tech_rst_sync`, `tech_iddr`, `tech_oddr`, `tech_sram_sp`, `tech_sram_sdp`, `tech_serdes_io`) wired into `filelists/common.f`, `tb/tb_tech_cells.sv`, `scripts/check_yosys_compat.py` (`make check_yosys`), and `docs/11_yosys_fpga_asic_guide.md`.
+- **9 New Quad-Bus Security, Video, SoC System, Debug, Memory, SerDes, & USB IPs (`ips/32`..`40`)**:
+  - `ips/32_pka`: Constant-time Public-Key Accelerator (`pka_top`, FIOS Montgomery RSA 256..4096b, X25519 RFC 7748, NIST P-256 ECC, WO `E` bank + `CMD.WIPE`).
+  - `ips/33_otp_trng_keymgr`: OTP/eFuse SECDED(39,32) controller + NIST SP 800-90B TRNG health-test/sponge conditioner + 8x256b Key-Vault with hardware sideload (`otp_trng_keymgr_top`).
+  - `ips/34_mipi_csi2_rx`: MIPI CSI-2 RX Camera Controller (1/2/4-lane deskew, 24b Hamming ECC, CRC-16, RAW8/10/12, RGB565/888, YUV422, Hard PPI / Soft D-PHY via `mipi_csi2_rx_top`).
+  - `ips/35_mipi_dsi_tx`: MIPI DSI-2 TX Display Controller (1/2/4-lane Video & Command/LP/BTA, ECC/CRC/EoTp, SMPTE TPG, Hard PPI / Soft D-PHY via `mipi_dsi_tx_top`).
+  - `ips/36_soc_sysctrl`: SoC Silicon Infrastructure Pack — `crg_top` (glitch-free mux/dividers/ICG/PLL CDC/reset sync), `iomux_top` (32x8 pinmux), `pmu_top`, `bus_firewall_top`, and `sram_ecc_wrap` (SECDED 39,32).
+  - `ips/37_ipc_debug`: Multi-Core IPC Mailbox + 32 Atomic Spinlocks (`ipc_mailbox_top`), RISC-V Debug Module DM 0.13/1.0 (`riscv_dm_top`), and 16-ch SAR-ADC Sequencer + Stereo Sinc3 PDM-to-PCM (`adc_pdm_top`).
+  - `ips/38_ddr_ctrl`: Multi-Standard DDR2/DDR3/DDR4 SDRAM Controller (`ddr_ctrl_top`, 16-bank FR-FCFS, SECDED ECC, DFI 4.0/5.0 & Soft PHY).
+  - `ips/39_serdes_combo`: Unified Multi-Protocol SerDes Combo Core (`serdes_combo_top`, 8b/10b + 128b/130b PCS, Elastic Buffer, PRBS BIST, Soft/Hard PMA, PCIe Gen1/2/3 + USB 3.x + SATA Gen1/2/3 + DisplayPort 1.2/1.4 + AUX).
+  - `ips/40_usb2_otg`: USB 2.0 Device & Host-Lite Controller (`usb2_otg_top`, UTMI+/ULPI/Soft-FS PHY, 8 EPs, SETUP, 4KB-safe Burst/SG DMA).
+
+### Changed
+- **xSPI / Octal DTR Flash Controller (`ips/04_xspi_xip` v2.0)**: Added `xspi_xip_v2_top` and `tb_xspi_xip_v2` featuring 8D-8D-8D DTR/DQS + `RX_DELAY_CFG`, AES-128-CTR OTFAD (2 regions), 2-way LRU 16B cache + CWF, multi-CS (`CS0..3`), depth-16 TX/RX FIFOs + DMA requests, and hardware `WIP` auto-polling while keeping `xspi_xip_top` 100% v1-compatible.
+- **Streaming Cryptographic Accelerator (`ips/28_crypto` v2.0)**: Added parameter-guarded AES-GCM (`ghash_core`), AES-XTS + CTS, RFC 8439 ChaCha20-Poly1305 AEAD, and FIPS 202 SHA3-256/512 & SHAKE128/256 (`tb_crypto_v2`) while preserving v1.0 CSR compatibility.
+- **FuseSoC Manifest (`sv_ip_library.core`) & Verification Totals**: Updated VLNV to `open:soc:sv_peripherals_interconnect_suite:3.0.0` (`40` IP filesets, `95` lint tops, `61` self-checking testbenches, `466` Yosys-checked RTL files).
+
 ## [2.0.0] - 2026-11-20
 
 ### Added

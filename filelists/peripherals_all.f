@@ -32,3 +32,12 @@
 -f ips/29_cordic/filelist.f
 -f ips/30_fft/filelist.f
 -f ips/31_dsp_filter/filelist.f
+-f ips/32_pka/filelist.f
+-f ips/33_otp_trng_keymgr/filelist.f
+-f ips/34_mipi_csi2_rx/filelist.f
+-f ips/35_mipi_dsi_tx/filelist.f
+-f ips/36_soc_sysctrl/filelist.f
+-f ips/37_ipc_debug/filelist.f
+-f ips/38_ddr_ctrl/filelist.f
+-f ips/39_serdes_combo/filelist.f
+-f ips/40_usb2_otg/filelist.f

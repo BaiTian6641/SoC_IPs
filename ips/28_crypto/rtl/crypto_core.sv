@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
-// crypto_core.sv - Streaming AES / SHA-2 / HMAC accelerator: CSR window, input/output FIFOs,
+// crypto_core.sv - Streaming AES (ECB/CBC/CTR/GCM/XTS), SHA-2/HMAC, ChaCha20-Poly1305,
+//                  and SHA-3/SHAKE accelerator: CSR window, input/output FIFOs,
 //                  AXI-Stream style 32-bit data ports, DMA requests, interrupts.
 //
-// Data path: [CSR DIN | s_axis] -> input FIFO -> AES engine / SHA engine -> output FIFO ->
+// Data path: [CSR DIN | s_axis] -> input FIFO -> Crypto Engines -> output FIFO ->
 //            [CSR DOUT | m_axis].  See ips/28_crypto/doc/README.md for the register map.
 //
-// Security properties: KEY and HMAC-key registers are write-only (reads return 0), are
-// cleared by CMD.WIPE (and by reset) and are never routed to any readable register or FIFO.
+// Security properties: KEY, TKEY, and HKEY registers are write-only (reads return 0),
+// are cleared by CMD.WIPE (and by reset), and are never routed to any readable register.
 
 module crypto_core
   import bus_pkg::*;
   import crypto_pkg::*;
 #(
-  parameter int unsigned AES_ARCH      = 0,    // 0: 1 round/clk, 1: 1 column/clk (4 clk/round)
-  parameter bit          SHA512_EN     = 1'b1, // include SHA-384/512
-  parameter int unsigned IN_FIFO_DEPTH  = 16,  // words, 8..255
-  parameter int unsigned OUT_FIFO_DEPTH = 16   // words, 8..255
+  parameter int unsigned AES_ARCH       = 0,    // 0: 1 round/clk, 1: 1 column/clk (4 clk/round)
+  parameter bit          SHA512_EN      = 1'b1, // include SHA-384/512
+  parameter bit          GCM_EN         = 1'b1, // include AES-GCM (GHASH)
+  parameter bit          XTS_EN         = 1'b1, // include AES-XTS (IEEE 1619)
+  parameter bit          CHACHA_EN      = 1'b1, // include ChaCha20 & Poly1305 AEAD
+  parameter bit          SHA3_EN        = 1'b1, // include SHA-3 & SHAKE128/256
+  parameter int unsigned IN_FIFO_DEPTH  = 16,   // words, 8..255
+  parameter int unsigned OUT_FIFO_DEPTH = 16    // words, 8..255
 ) (
   input  logic        clk_i,
   input  logic        rst_ni,
@@ -48,34 +53,42 @@ module crypto_core
   localparam int unsigned OUTW  = $clog2(OUT_FIFO_DEPTH + 1);
 
   // ---------------------------------------------------------------- register offsets
-  localparam logic [11:0] A_ID      = 12'h000;
-  localparam logic [11:0] A_CAPS    = 12'h004;
-  localparam logic [11:0] A_CTRL    = 12'h008;
-  localparam logic [11:0] A_CMD     = 12'h00c;
-  localparam logic [11:0] A_STATUS  = 12'h010;
-  localparam logic [11:0] A_ERR     = 12'h014;
-  localparam logic [11:0] A_IRQ_EN  = 12'h018;
-  localparam logic [11:0] A_IRQ_ST  = 12'h01c;
-  localparam logic [11:0] A_FIFOCFG = 12'h020;
-  localparam logic [11:0] A_LASTB   = 12'h024;
-  localparam logic [11:0] A_MSGLEN  = 12'h028;
-  localparam logic [11:0] A_DIN     = 12'h02c;
-  localparam logic [11:0] A_DINLAST = 12'h030;
-  localparam logic [11:0] A_DOUT    = 12'h034;
-  localparam logic [11:0] A_DOUTINF = 12'h038;
-  localparam logic [11:0] A_HKLEN   = 12'h070;
+  localparam logic [11:0] A_ID         = 12'h000;
+  localparam logic [11:0] A_CAPS       = 12'h004;
+  localparam logic [11:0] A_CTRL       = 12'h008;
+  localparam logic [11:0] A_CMD        = 12'h00c;
+  localparam logic [11:0] A_STATUS     = 12'h010;
+  localparam logic [11:0] A_ERR        = 12'h014;
+  localparam logic [11:0] A_IRQ_EN     = 12'h018;
+  localparam logic [11:0] A_IRQ_ST     = 12'h01c;
+  localparam logic [11:0] A_FIFOCFG    = 12'h020;
+  localparam logic [11:0] A_LASTB      = 12'h024;
+  localparam logic [11:0] A_MSGLEN     = 12'h028;
+  localparam logic [11:0] A_DIN        = 12'h02c;
+  localparam logic [11:0] A_DINLAST    = 12'h030;
+  localparam logic [11:0] A_DOUT       = 12'h034;
+  localparam logic [11:0] A_DOUTINF    = 12'h038;
+  localparam logic [11:0] A_HKLEN      = 12'h070;
 
-  localparam logic [31:0] ID_VALUE  = 32'hC8A0_0100;
+  // v2.0 extension registers (0x180..0x2FF)
+  localparam logic [11:0] A_VERSION    = 12'h180;
+  localparam logic [11:0] A_AAD_LEN    = 12'h184;
+  localparam logic [11:0] A_XOF_LEN    = 12'h188;
+  localparam logic [11:0] A_CHACHA_CNT = 12'h18c;
+
+  localparam logic [31:0] ID_VALUE     = 32'hC8A0_0100;
+  localparam logic [31:0] VER_VALUE    = 32'h0002_0000;
 
   // ERR bits
   localparam int unsigned E_NOKEY = 0, E_ALIGN = 1, E_PROTO = 2, E_BADCFG = 3,
-                          E_BUSYWR = 4, E_INOVF = 5, E_OUTUNF = 6;
+                          E_BUSYWR = 4, E_INOVF = 5, E_OUTUNF = 6, E_TAGFAIL = 7;
 
   // ---------------------------------------------------------------- registers
   logic        ctl_auto_q, ctl_ctr32_q, ctl_dec_q, ctl_hmac_q, ctl_bsi_q, ctl_bso_q;
   logic        ctl_inaxis_q, ctl_outaxis_q, ctl_digfifo_q;
+  logic        ctl_xts_q, ctl_poly_q, ctl_tagchk_q;
   logic [1:0]  ctl_mode_q, ctl_keylen_q, ctl_chain_q, ctl_alg_q;
-  logic [6:0]  err_q;
+  logic [7:0]  err_q;
   logic [2:0]  ev_q;                 // sticky: [0] DONE [1] ERR [2] KEY
   logic [4:0]  irq_en_q;
   logic [7:0]  in_thr_q, out_thr_q;
@@ -83,16 +96,17 @@ module crypto_core
   logic [2:0]  lastb_q;
   logic [7:0]  hklen_q;
   logic [31:0] msg_len_q;
-  logic [255:0] key_q;
-  logic [127:0] iv_q;
+  logic [31:0] aad_len_q, xof_len_q, chacha_cnt_q;
+  logic [255:0] key_q, tkey_q;
+  logic [127:0] iv_q, tag_exp_q;
   logic [NHK*32-1:0] hkey_q;
   logic        key_valid_q, key_dirty_q;
   logic [1:0]  setup_kl_q;           // key length the schedule was computed for
   logic        armed_q;              // message armed / in flight
   logic        setup_q;              // key schedule running
   logic        pend_start_q;         // start the message when setup completes
-  logic        run_aes_q;            // current/last message is AES
-  logic        aes_setup_p, aes_start_p, sha_start_p;   // 1-clock pulses
+  logic [1:0]  run_mode_q;           // current/last message mode (0 AES, 1 SHA2, 2 ChaCha, 3 SHA3)
+  logic        aes_setup_p, aes_start_p, sha_start_p, chacha_start_p, sha3_start_p;
 
   wire cfg_busy = armed_q || setup_q;
 
@@ -101,13 +115,6 @@ module crypto_core
   wire        req_rd  = csr_req_i.valid && !csr_req_i.write;
   wire [11:0] a12     = csr_req_i.addr[11:0];
   wire [31:0] wd      = csr_req_i.wdata;
-
-  function automatic logic [31:0] merge(input logic [31:0] o, input logic [31:0] n,
-                                        input logic [3:0] s);
-    logic [31:0] r;
-    for (int i = 0; i < 4; i++) r[8*i +: 8] = s[i] ? n[8*i +: 8] : o[8*i +: 8];
-    return r;
-  endfunction
 
   function automatic logic [31:0] to_stream(input logic [31:0] w, input logic bsw);
     return bsw ? w : bswap32(w);       // BSWAP=0: byte 0 in bits [7:0]; =1: byte 0 in [31:24]
@@ -122,10 +129,13 @@ module crypto_core
   wire kill      = cmd_wipe || cmd_abort;
 
   // address classes
-  wire sel_key   = (a12 >= 12'h040) && (a12 < 12'h060);
-  wire sel_iv    = (a12 >= 12'h060) && (a12 < 12'h070);
-  wire sel_dig   = (a12 >= 12'h080) && (a12 < 12'h0c0);
-  wire sel_hkey  = (a12 >= 12'h100) && (a12 < 12'h100 + 12'(NHK * 4));
+  wire sel_key    = (a12 >= 12'h040) && (a12 < 12'h060);
+  wire sel_iv     = (a12 >= 12'h060) && (a12 < 12'h070);
+  wire sel_dig    = (a12 >= 12'h080) && (a12 < 12'h0c0);
+  wire sel_hkey   = (a12 >= 12'h100) && (a12 < 12'h100 + 12'(NHK * 4));
+  wire sel_tag    = (a12 >= 12'h190) && (a12 < 12'h1a0);
+  wire sel_tagexp = (a12 >= 12'h1a0) && (a12 < 12'h1b0);
+  wire sel_tkey   = (a12 >= 12'h1b0) && (a12 < 12'h1d0);
   wire [4:0] widx = a12[6:2];
 
   // ---------------------------------------------------------------- FIFOs
@@ -203,7 +213,8 @@ module crypto_core
 
   // ---------------------------------------------------------------- engines
   logic        aes_iv_upd, aes_active, aes_done, aes_setup_done;
-  logic [127:0] aes_iv_nxt;
+  logic        aes_tag_fail, aes_tag_vld, aes_tag_ok;
+  logic [127:0] aes_iv_nxt, aes_tag;
   logic [1:0]  aes_err;
   logic        aes_in_pop, aes_out_push;
   logic [35:0] aes_out_wdata;
@@ -215,25 +226,51 @@ module crypto_core
   logic        sha_in_pop, sha_out_push;
   logic [35:0] sha_out_wdata;
 
-  crypto_aes_eng #(.ARCH(AES_ARCH)) u_aes (
+  logic        ch_active, ch_done, ch_tag_fail, ch_tag_vld, ch_tag_ok;
+  logic [127:0] ch_tag;
+  logic [1:0]  ch_err;
+  logic        ch_in_pop, ch_out_push;
+  logic [35:0] ch_out_wdata;
+
+  logic        s3_active, s3_done, s3_dig_vld;
+  logic [511:0] s3_dig;
+  logic [31:0] s3_mlen;
+  logic [1:0]  s3_err;
+  logic        s3_in_pop, s3_out_push;
+  logic [35:0] s3_out_wdata;
+
+  crypto_aes_eng #(
+    .ARCH   (AES_ARCH),
+    .GCM_EN (GCM_EN),
+    .XTS_EN (XTS_EN)
+  ) u_aes (
     .clk_i        (clk_i),
     .rst_ni       (rst_ni),
     .wipe_i       (cmd_wipe),
     .abort_i      (kill),
     .key_i        (key_q),
+    .tkey_i       (tkey_q),
     .keylen_i     (ctl_keylen_q),
     .setup_i      (aes_setup_p),
     .setup_done_o (aes_setup_done),
     .start_i      (aes_start_p),
     .dec_i        (ctl_dec_q),
     .chain_i      (ctl_chain_q),
+    .xts_i        (ctl_xts_q),
     .ctr32_i      (ctl_ctr32_q),
     .iv_i         (iv_q),
+    .aad_len_i    (aad_len_q),
+    .tag_chk_i    (ctl_tagchk_q),
+    .tag_exp_i    (tag_exp_q),
     .iv_upd_o     (aes_iv_upd),
     .iv_nxt_o     (aes_iv_nxt),
     .active_o     (aes_active),
     .done_o       (aes_done),
     .err_o        (aes_err),
+    .tag_fail_o   (aes_tag_fail),
+    .tag_vld_o    (aes_tag_vld),
+    .tag_ok_o     (aes_tag_ok),
+    .tag_o        (aes_tag),
     .in_empty_i   (in_empty),
     .in_rdata_i   (in_rdata),
     .in_pop_o     (aes_in_pop),
@@ -266,16 +303,134 @@ module crypto_core
     .out_wdata_o  (sha_out_wdata)
   );
 
-  assign in_pop    = aes_in_pop || sha_in_pop;
-  assign out_push  = aes_out_push || sha_out_push;
-  assign out_wdata = sha_out_push ? sha_out_wdata : aes_out_wdata;
+  if (CHACHA_EN) begin : g_chacha
+    crypto_chacha_eng u_chacha (
+      .clk_i       (clk_i),
+      .rst_ni      (rst_ni),
+      .wipe_i      (cmd_wipe),
+      .abort_i     (kill),
+      .start_i     (chacha_start_p),
+      .poly_en_i   (ctl_poly_q),
+      .dec_i       (ctl_dec_q),
+      .tag_chk_i   (ctl_tagchk_q),
+      .key_i       (key_q),
+      .nonce_i     (iv_q[127:32]),
+      .ctr_i       (chacha_cnt_q),
+      .aad_len_i   (aad_len_q),
+      .tag_exp_i   (tag_exp_q),
+      .active_o    (ch_active),
+      .done_o      (ch_done),
+      .err_o       (ch_err),
+      .tag_fail_o  (ch_tag_fail),
+      .tag_vld_o   (ch_tag_vld),
+      .tag_ok_o    (ch_tag_ok),
+      .tag_o       (ch_tag),
+      .in_empty_i  (in_empty),
+      .in_rdata_i  (in_rdata),
+      .in_pop_o    (ch_in_pop),
+      .out_full_i  (out_full),
+      .out_push_o  (ch_out_push),
+      .out_wdata_o (ch_out_wdata)
+    );
+  end else begin : g_nochacha
+    assign ch_active    = 1'b0;
+    assign ch_done      = 1'b0;
+    assign ch_err       = '0;
+    assign ch_tag_fail  = 1'b0;
+    assign ch_tag_vld   = 1'b0;
+    assign ch_tag_ok    = 1'b0;
+    assign ch_tag       = '0;
+    assign ch_in_pop    = 1'b0;
+    assign ch_out_push  = 1'b0;
+    assign ch_out_wdata = '0;
+  end
 
-  wire eng_done = run_aes_q ? aes_done : sha_done;
-  wire [6:0] eng_err = {4'b0, (run_aes_q ? aes_err[1] : sha_err[1]), (run_aes_q ? aes_err[0] : 1'b0), 1'b0};
-  wire eng_fatal = run_aes_q && aes_err[0];
+  if (SHA3_EN) begin : g_sha3
+    crypto_sha3_eng u_sha3 (
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .wipe_i       (cmd_wipe),
+      .abort_i      (kill),
+      .start_i      (sha3_start_p),
+      .alg_i        (ctl_alg_q),
+      .dig_stream_i (ctl_digfifo_q),
+      .xof_len_i    (xof_len_q),
+      .active_o     (s3_active),
+      .done_o       (s3_done),
+      .dig_vld_o    (s3_dig_vld),
+      .dig_o        (s3_dig),
+      .msg_len_o    (s3_mlen),
+      .err_o        (s3_err),
+      .in_empty_i   (in_empty),
+      .in_rdata_i   (in_rdata),
+      .in_pop_o     (s3_in_pop),
+      .out_full_i   (out_full),
+      .out_push_o   (s3_out_push),
+      .out_wdata_o  (s3_out_wdata)
+    );
+  end else begin : g_nosha3
+    assign s3_active    = 1'b0;
+    assign s3_done      = 1'b0;
+    assign s3_dig_vld   = 1'b0;
+    assign s3_dig       = '0;
+    assign s3_mlen      = '0;
+    assign s3_err       = '0;
+    assign s3_in_pop    = 1'b0;
+    assign s3_out_push  = 1'b0;
+    assign s3_out_wdata = '0;
+  end
+
+  assign in_pop   = aes_in_pop || sha_in_pop || ch_in_pop || s3_in_pop;
+  assign out_push = aes_out_push || sha_out_push || ch_out_push || s3_out_push;
+  always_comb begin
+    if (sha_out_push)      out_wdata = sha_out_wdata;
+    else if (ch_out_push)  out_wdata = ch_out_wdata;
+    else if (s3_out_push)  out_wdata = s3_out_wdata;
+    else                   out_wdata = aes_out_wdata;
+  end
+
+  logic eng_done, eng_fatal, eng_tag_vld, eng_tag_ok;
+  logic [127:0] eng_tag;
+  logic [7:0]   eng_err;
+  always_comb begin
+    unique case (run_mode_q)
+      2'd0: begin
+        eng_done    = aes_done;
+        eng_err     = {aes_tag_fail, 4'b0, aes_err[1], aes_err[0], 1'b0};
+        eng_fatal   = aes_err[0] || aes_err[1];
+        eng_tag_vld = aes_tag_vld;
+        eng_tag_ok  = aes_tag_ok;
+        eng_tag     = aes_tag;
+      end
+      2'd1: begin
+        eng_done    = sha_done;
+        eng_err     = {5'b0, sha_err[1], 1'b0, 1'b0};
+        eng_fatal   = 1'b0;
+        eng_tag_vld = 1'b0;
+        eng_tag_ok  = 1'b0;
+        eng_tag     = '0;
+      end
+      2'd2: begin
+        eng_done    = ch_done;
+        eng_err     = {ch_tag_fail, 4'b0, ch_err[1], 1'b0, 1'b0};
+        eng_fatal   = ch_err[1];
+        eng_tag_vld = ch_tag_vld;
+        eng_tag_ok  = ch_tag_ok;
+        eng_tag     = ch_tag;
+      end
+      default: begin
+        eng_done    = s3_done;
+        eng_err     = {5'b0, s3_err[1], 1'b0, 1'b0};
+        eng_fatal   = 1'b0;
+        eng_tag_vld = 1'b0;
+        eng_tag_ok  = 1'b0;
+        eng_tag     = '0;
+      end
+    endcase
+  end
 
   // ---------------------------------------------------------------- output side
-  wire [31:0] out_head_raw = ctl_bso_q ? out_rdata[31:0] : bswap32(out_rdata[31:0]);
+  wire [31:0] out_head_raw  = ctl_bso_q ? out_rdata[31:0] : bswap32(out_rdata[31:0]);
   wire        out_head_last = out_rdata[32];
   wire [2:0]  out_head_nb   = out_rdata[35:33];
 
@@ -296,7 +451,7 @@ module crypto_core
   assign out_pop = (m_axis_tvalid && m_axis_tready) || (csr_dout_rd && !out_empty);
 
   // ---------------------------------------------------------------- DMA / IRQ levels
-  wire [INW:0]  in_free = (INW+1)'(IN_FIFO_DEPTH) - (INW+1)'(in_level);
+  wire [INW:0]  in_free   = (INW+1)'(IN_FIFO_DEPTH) - (INW+1)'(in_level);
   wire [7:0]    in_thr_e  = (in_thr_q == 8'd0) ? 8'd1 : in_thr_q;
   wire [7:0]    out_thr_e = (out_thr_q == 8'd0) ? 8'd1 : out_thr_q;
   wire in_space  = (9'(in_free) >= 9'(in_thr_e)) && !in_full;
@@ -315,14 +470,25 @@ module crypto_core
     need_setup    = key_dirty_q || (setup_kl_q != ctl_keylen_q);
     unique case (ctl_mode_q)
       2'd0: begin
-        if (ctl_keylen_q == 2'd3 || ctl_chain_q == 2'd3) start_bad_cfg = 1'b1;
+        if (ctl_keylen_q == 2'd3) start_bad_cfg = 1'b1;
+        if (ctl_xts_q) begin
+          if (!XTS_EN || ctl_chain_q != 2'd0 || ctl_keylen_q == 2'd1) start_bad_cfg = 1'b1;
+        end else if (ctl_chain_q == 2'd3 && !GCM_EN) begin
+          start_bad_cfg = 1'b1;
+        end
         if (!key_valid_q && !key_dirty_q) start_no_key = 1'b1;
       end
       2'd1: begin
         if (!SHA512_EN && ctl_alg_q[1]) start_bad_cfg = 1'b1;
         if (ctl_hmac_q && hklen_q > (SHA512_EN && ctl_alg_q[1] ? 8'd128 : 8'd64)) start_bad_cfg = 1'b1;
       end
-      default: start_bad_cfg = 1'b1;
+      2'd2: begin
+        if (!CHACHA_EN) start_bad_cfg = 1'b1;
+        if (!key_valid_q && !key_dirty_q) start_no_key = 1'b1;
+      end
+      2'd3: begin
+        if (!SHA3_EN) start_bad_cfg = 1'b1;
+      end
     endcase
     kload_bad_cfg = (ctl_keylen_q == 2'd3);
     kload_no_key  = !key_valid_q && !key_dirty_q;
@@ -334,28 +500,43 @@ module crypto_core
   always_comb begin
     rd_mux = '0;
     rd_err = 1'b0;
-    if (sel_key || sel_hkey) begin
+    if (sel_key || sel_hkey || sel_tkey) begin
       rd_mux = '0;                                    // write-only, never readable
     end else if (sel_iv) begin
-      rd_mux = ctl_bso_q ? iv_q[127 - 32*int'(widx[1:0]) -: 32] : bswap32(iv_q[127 - 32*int'(widx[1:0]) -: 32]);
+      rd_mux = ctl_bso_q ? iv_q[127 - 32*int'(widx[1:0]) -: 32]
+                         : bswap32(iv_q[127 - 32*int'(widx[1:0]) -: 32]);
     end else if (sel_dig) begin
       rd_mux = '0;
-      if (sha_dig_vld && !run_aes_q) begin
+      if ((run_mode_q == 2'd1) && sha_dig_vld) begin
         rd_mux = ctl_bso_q ? sha_dig[511 - 32*int'(widx[3:0]) -: 32]
                            : bswap32(sha_dig[511 - 32*int'(widx[3:0]) -: 32]);
+      end else if ((run_mode_q == 2'd3) && s3_dig_vld) begin
+        rd_mux = ctl_bso_q ? s3_dig[511 - 32*int'(widx[3:0]) -: 32]
+                           : bswap32(s3_dig[511 - 32*int'(widx[3:0]) -: 32]);
       end
+    end else if (sel_tag) begin
+      rd_mux = '0;
+      if (eng_tag_vld) begin
+        rd_mux = ctl_bso_q ? eng_tag[127 - 32*int'(widx[1:0]) -: 32]
+                           : bswap32(eng_tag[127 - 32*int'(widx[1:0]) -: 32]);
+      end
+    end else if (sel_tagexp) begin
+      rd_mux = ctl_bso_q ? tag_exp_q[127 - 32*int'(widx[1:0]) -: 32]
+                         : bswap32(tag_exp_q[127 - 32*int'(widx[1:0]) -: 32]);
     end else begin
       unique case (a12)
         A_ID:      rd_mux = ID_VALUE;
-        A_CAPS:    rd_mux = {6'd0, 1'b1, 1'b1, 8'(OUT_FIFO_DEPTH), 8'(IN_FIFO_DEPTH), 5'd0,
-                             (AES_ARCH != 0), 1'b0, SHA512_EN};
-        A_CTRL:    rd_mux = {15'd0, ctl_digfifo_q, ctl_outaxis_q, ctl_inaxis_q, ctl_bso_q, ctl_bsi_q,
+        A_CAPS:    rd_mux = {6'd0, 1'b1, 1'b1, 8'(OUT_FIFO_DEPTH), 8'(IN_FIFO_DEPTH), 2'd0,
+                             SHA3_EN, CHACHA_EN, XTS_EN, (AES_ARCH != 0), GCM_EN, SHA512_EN};
+        A_CTRL:    rd_mux = {12'd0, ctl_tagchk_q, ctl_poly_q, ctl_xts_q,
+                             ctl_digfifo_q, ctl_outaxis_q, ctl_inaxis_q, ctl_bso_q, ctl_bsi_q,
                              ctl_hmac_q, ctl_alg_q, ctl_ctr32_q, ctl_chain_q, ctl_dec_q, ctl_keylen_q,
                              ctl_mode_q, ctl_auto_q};
         A_CMD:     rd_mux = '0;
-        A_STATUS:  rd_mux = {8'(out_level), 8'(in_level), 8'd0, armed_q, out_empty, out_full, in_empty,
+        A_STATUS:  rd_mux = {8'(out_level), 8'(in_level), 6'd0, eng_tag_ok, eng_tag_vld,
+                             armed_q, out_empty, out_full, in_empty,
                              in_full, key_dirty_q, key_valid_q, (armed_q || setup_q)};
-        A_ERR:     rd_mux = {25'd0, err_q};
+        A_ERR:     rd_mux = {24'd0, err_q};
         A_IRQ_EN:  rd_mux = {27'd0, irq_en_q};
         A_IRQ_ST:  rd_mux = {27'd0, irq_stat};
         A_FIFOCFG: rd_mux = {14'd0, dma_out_en_q, dma_in_en_q, out_thr_q, in_thr_q};
@@ -365,6 +546,10 @@ module crypto_core
         A_DOUT:    rd_mux = out_empty ? 32'h0 : out_head_raw;
         A_DOUTINF: rd_mux = {27'd0, !out_empty, out_head_last, out_head_nb};
         A_HKLEN:   rd_mux = {24'd0, hklen_q};
+        A_VERSION: rd_mux = VER_VALUE;
+        A_AAD_LEN: rd_mux = aad_len_q;
+        A_XOF_LEN: rd_mux = xof_len_q;
+        A_CHACHA_CNT: rd_mux = chacha_cnt_q;
         default:   rd_err = 1'b1;
       endcase
     end
@@ -378,30 +563,33 @@ module crypto_core
     if (csr_req_i.valid) begin
       if (!csr_req_i.write) csr_rsp_o.err = rd_err;
       else begin
-        // write to an unmapped address
         csr_rsp_o.err = !(sel_key || sel_iv || sel_dig || sel_hkey ||
+                          sel_tag || sel_tagexp || sel_tkey ||
                           (a12 == A_ID) || (a12 == A_CAPS) || (a12 == A_CTRL) || (a12 == A_CMD) ||
                           (a12 == A_STATUS) || (a12 == A_ERR) || (a12 == A_IRQ_EN) || (a12 == A_IRQ_ST) ||
                           (a12 == A_FIFOCFG) || (a12 == A_LASTB) || (a12 == A_MSGLEN) || (a12 == A_DIN) ||
-                          (a12 == A_DINLAST) || (a12 == A_DOUT) || (a12 == A_DOUTINF) || (a12 == A_HKLEN));
+                          (a12 == A_DINLAST) || (a12 == A_DOUT) || (a12 == A_DOUTINF) || (a12 == A_HKLEN) ||
+                          (a12 == A_VERSION) || (a12 == A_AAD_LEN) || (a12 == A_XOF_LEN) || (a12 == A_CHACHA_CNT));
       end
     end
   end
 
   // ---------------------------------------------------------------- sequential state
-  logic [6:0] err_set;    // new error events this clock
+  logic [7:0] err_set;    // new error events this clock
   logic       ev_done_set, ev_key_set;
 
   always_comb begin
-    err_set = eng_err & {7{armed_q}};
+    err_set = eng_err & {8{armed_q}};
     // CSR-side checks
-    if (req_wr && (sel_key || sel_hkey || sel_iv || (a12 == A_CTRL) || (a12 == A_HKLEN)) && cfg_busy)
+    if (req_wr && (sel_key || sel_hkey || sel_tkey || sel_iv || sel_tagexp ||
+                   (a12 == A_CTRL) || (a12 == A_HKLEN) ||
+                   (a12 == A_AAD_LEN) || (a12 == A_XOF_LEN) || (a12 == A_CHACHA_CNT)) && cfg_busy)
       err_set[E_BUSYWR] = 1'b1;
     if (cmd_start && cfg_busy)  err_set[E_BUSYWR] = 1'b1;
     if (cmd_kload && cfg_busy)  err_set[E_BUSYWR] = 1'b1;
     if (cmd_start && !cfg_busy) begin
-      if (start_bad_cfg)                          err_set[E_BADCFG] = 1'b1;
-      else if (ctl_mode_q == 2'd0 && start_no_key) err_set[E_NOKEY] = 1'b1;
+      if (start_bad_cfg)                                          err_set[E_BADCFG] = 1'b1;
+      else if ((ctl_mode_q == 2'd0 || ctl_mode_q == 2'd2) && start_no_key) err_set[E_NOKEY] = 1'b1;
     end
     if (cmd_kload && !cfg_busy) begin
       if (kload_bad_cfg)      err_set[E_BADCFG] = 1'b1;
@@ -415,43 +603,53 @@ module crypto_core
     if (req_rd && (a12 == A_DOUT) && ctl_outaxis_q) err_set[E_PROTO] = 1'b1;
   end
 
-  wire start_ok = cmd_start && !cfg_busy && !start_bad_cfg && !(ctl_mode_q == 2'd0 && start_no_key);
-  wire kload_ok = cmd_kload && !cfg_busy && !kload_bad_cfg && !kload_no_key;
+  wire start_ok   = cmd_start && !cfg_busy && !start_bad_cfg &&
+                    !((ctl_mode_q == 2'd0 || ctl_mode_q == 2'd2) && start_no_key);
+  wire kload_ok   = cmd_kload && !cfg_busy && !kload_bad_cfg && !kload_no_key;
   wire auto_rearm = eng_done && armed_q && ctl_auto_q && !eng_fatal && !kill;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      ctl_auto_q    <= 1'b0;  ctl_ctr32_q <= 1'b0;  ctl_dec_q  <= 1'b0;  ctl_hmac_q  <= 1'b0;
-      ctl_bsi_q     <= 1'b0;  ctl_bso_q   <= 1'b0;  ctl_inaxis_q <= 1'b0; ctl_outaxis_q <= 1'b0;
-      ctl_digfifo_q <= 1'b0;
-      ctl_mode_q    <= '0;    ctl_keylen_q <= '0;   ctl_chain_q <= '0;   ctl_alg_q <= '0;
-      err_q         <= '0;
-      ev_q          <= '0;
-      irq_en_q      <= '0;
-      in_thr_q      <= 8'd4;
-      out_thr_q     <= 8'd1;
-      dma_in_en_q   <= 1'b0;
-      dma_out_en_q  <= 1'b0;
-      lastb_q       <= 3'd4;
-      hklen_q       <= '0;
-      msg_len_q     <= '0;
-      key_q         <= '0;
-      iv_q          <= '0;
-      hkey_q        <= '0;
-      key_valid_q   <= 1'b0;
-      key_dirty_q   <= 1'b0;
-      setup_kl_q    <= '0;
-      armed_q       <= 1'b0;
-      setup_q       <= 1'b0;
-      pend_start_q  <= 1'b0;
-      run_aes_q     <= 1'b1;
-      aes_setup_p   <= 1'b0;
-      aes_start_p   <= 1'b0;
-      sha_start_p   <= 1'b0;
+      ctl_auto_q     <= 1'b0;  ctl_ctr32_q <= 1'b0;  ctl_dec_q  <= 1'b0;  ctl_hmac_q  <= 1'b0;
+      ctl_bsi_q      <= 1'b0;  ctl_bso_q   <= 1'b0;  ctl_inaxis_q <= 1'b0; ctl_outaxis_q <= 1'b0;
+      ctl_digfifo_q  <= 1'b0;  ctl_xts_q   <= 1'b0;  ctl_poly_q <= 1'b0;  ctl_tagchk_q  <= 1'b0;
+      ctl_mode_q     <= '0;    ctl_keylen_q <= '0;   ctl_chain_q <= '0;   ctl_alg_q <= '0;
+      err_q          <= '0;
+      ev_q           <= '0;
+      irq_en_q       <= '0;
+      in_thr_q       <= 8'd4;
+      out_thr_q      <= 8'd1;
+      dma_in_en_q    <= 1'b0;
+      dma_out_en_q   <= 1'b0;
+      lastb_q        <= 3'd4;
+      hklen_q        <= '0;
+      msg_len_q      <= '0;
+      aad_len_q      <= '0;
+      xof_len_q      <= '0;
+      chacha_cnt_q   <= '0;
+      key_q          <= '0;
+      tkey_q         <= '0;
+      iv_q           <= '0;
+      tag_exp_q      <= '0;
+      hkey_q         <= '0;
+      key_valid_q    <= 1'b0;
+      key_dirty_q    <= 1'b0;
+      setup_kl_q     <= '0;
+      armed_q        <= 1'b0;
+      setup_q        <= 1'b0;
+      pend_start_q   <= 1'b0;
+      run_mode_q     <= 2'd0;
+      aes_setup_p    <= 1'b0;
+      aes_start_p    <= 1'b0;
+      sha_start_p    <= 1'b0;
+      chacha_start_p <= 1'b0;
+      sha3_start_p   <= 1'b0;
     end else begin
-      aes_setup_p <= 1'b0;
-      aes_start_p <= 1'b0;
-      sha_start_p <= 1'b0;
+      aes_setup_p    <= 1'b0;
+      aes_start_p    <= 1'b0;
+      sha_start_p    <= 1'b0;
+      chacha_start_p <= 1'b0;
+      sha3_start_p   <= 1'b0;
 
       // ---- error / event bookkeeping
       err_q <= err_q | err_set;
@@ -483,18 +681,24 @@ module crypto_core
             end
             if (csr_req_i.wstrb[2]) begin
               ctl_digfifo_q <= wd[16];
+              ctl_xts_q     <= wd[17];
+              ctl_poly_q    <= wd[18];
+              ctl_tagchk_q  <= wd[19];
             end
           end
-          A_ERR:    if (csr_req_i.wstrb[0]) err_q <= (err_q | err_set) & ~wd[6:0];
-          A_IRQ_EN: if (csr_req_i.wstrb[0]) irq_en_q <= wd[4:0];
-          A_IRQ_ST: if (csr_req_i.wstrb[0]) ev_q <= (ev_q | {ev_key_set, (|err_set), ev_done_set}) & ~wd[2:0];
+          A_ERR:        if (csr_req_i.wstrb[0]) err_q <= (err_q | err_set) & ~wd[7:0];
+          A_IRQ_EN:     if (csr_req_i.wstrb[0]) irq_en_q <= wd[4:0];
+          A_IRQ_ST:     if (csr_req_i.wstrb[0]) ev_q <= (ev_q | {ev_key_set, (|err_set), ev_done_set}) & ~wd[2:0];
           A_FIFOCFG: begin
             if (csr_req_i.wstrb[0]) in_thr_q  <= wd[7:0];
             if (csr_req_i.wstrb[1]) out_thr_q <= wd[15:8];
             if (csr_req_i.wstrb[2]) begin dma_in_en_q <= wd[16]; dma_out_en_q <= wd[17]; end
           end
-          A_LASTB:  if (csr_req_i.wstrb[0]) lastb_q <= wd[2:0];
-          A_HKLEN:  if (!cfg_busy && csr_req_i.wstrb[0]) hklen_q <= wd[7:0];
+          A_LASTB:      if (csr_req_i.wstrb[0]) lastb_q <= wd[2:0];
+          A_HKLEN:      if (!cfg_busy && csr_req_i.wstrb[0]) hklen_q <= wd[7:0];
+          A_AAD_LEN:    if (!cfg_busy && csr_req_i.wstrb == 4'hF) aad_len_q <= wd;
+          A_XOF_LEN:    if (!cfg_busy && csr_req_i.wstrb == 4'hF) xof_len_q <= wd;
+          A_CHACHA_CNT: if (!cfg_busy && csr_req_i.wstrb == 4'hF) chacha_cnt_q <= wd;
           default: ;
         endcase
         if (!cfg_busy) begin
@@ -503,8 +707,12 @@ module crypto_core
             key_dirty_q <= 1'b1;
             key_valid_q <= 1'b0;
           end
+          if (sel_tkey)
+            tkey_q[255 - 32*(int'(widx[2:0]) ^ 4) -: 32] <= to_stream(wd, ctl_bsi_q);
           if (sel_iv)
             iv_q[127 - 32*int'(widx[1:0]) -: 32] <= to_stream(wd, ctl_bsi_q);
+          if (sel_tagexp)
+            tag_exp_q[127 - 32*int'(widx[1:0]) -: 32] <= to_stream(wd, ctl_bsi_q);
           if (sel_hkey)
             hkey_q[32*(SHA512_EN ? int'(widx) : int'(widx[3:0])) +: 32] <= to_stream(wd, ctl_bsi_q);
         end
@@ -515,15 +723,23 @@ module crypto_core
 
       // ---- start sequencing
       if (start_ok) begin
-        armed_q   <= 1'b1;
-        run_aes_q <= (ctl_mode_q == 2'd0);
-        msg_len_q <= '0;
-        if (ctl_mode_q == 2'd0 && need_setup) begin
-          setup_q      <= 1'b1;
-          pend_start_q <= 1'b1;
-          aes_setup_p  <= 1'b1;
-        end else if (ctl_mode_q == 2'd0) aes_start_p <= 1'b1;
-        else                             sha_start_p <= 1'b1;
+        armed_q    <= 1'b1;
+        run_mode_q <= ctl_mode_q;
+        msg_len_q  <= '0;
+        unique case (ctl_mode_q)
+          2'd0: begin
+            if (need_setup) begin
+              setup_q      <= 1'b1;
+              pend_start_q <= 1'b1;
+              aes_setup_p  <= 1'b1;
+            end else begin
+              aes_start_p  <= 1'b1;
+            end
+          end
+          2'd1: sha_start_p    <= 1'b1;
+          2'd2: chacha_start_p <= 1'b1;
+          2'd3: sha3_start_p   <= 1'b1;
+        endcase
       end
       if (kload_ok) begin
         setup_q      <= 1'b1;
@@ -547,8 +763,12 @@ module crypto_core
         ev_q[0] <= 1'b1;
         if (auto_rearm) begin
           msg_len_q <= '0;
-          if (run_aes_q) aes_start_p <= 1'b1;
-          else           sha_start_p <= 1'b1;
+          unique case (run_mode_q)
+            2'd0: aes_start_p    <= 1'b1;
+            2'd1: sha_start_p    <= 1'b1;
+            2'd2: chacha_start_p <= 1'b1;
+            2'd3: sha3_start_p   <= 1'b1;
+          endcase
         end else begin
           armed_q <= 1'b0;
         end
@@ -556,19 +776,26 @@ module crypto_core
 
       // ---- abort / wipe
       if (kill) begin
-        armed_q      <= 1'b0;
-        setup_q      <= 1'b0;
-        pend_start_q <= 1'b0;
-        aes_setup_p  <= 1'b0;
-        aes_start_p  <= 1'b0;
-        sha_start_p  <= 1'b0;
+        armed_q        <= 1'b0;
+        setup_q        <= 1'b0;
+        pend_start_q   <= 1'b0;
+        aes_setup_p    <= 1'b0;
+        aes_start_p    <= 1'b0;
+        sha_start_p    <= 1'b0;
+        chacha_start_p <= 1'b0;
+        sha3_start_p   <= 1'b0;
       end
       if (cmd_wipe) begin
-        key_q       <= '0;
-        hkey_q      <= '0;
-        iv_q        <= '0;
-        key_valid_q <= 1'b0;
-        key_dirty_q <= 1'b0;
+        key_q        <= '0;
+        tkey_q       <= '0;
+        hkey_q       <= '0;
+        iv_q         <= '0;
+        tag_exp_q    <= '0;
+        aad_len_q    <= '0;
+        xof_len_q    <= '0;
+        chacha_cnt_q <= '0;
+        key_valid_q  <= 1'b0;
+        key_dirty_q  <= 1'b0;
       end
     end
   end

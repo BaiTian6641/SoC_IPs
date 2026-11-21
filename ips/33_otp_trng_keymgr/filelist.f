@@ -1,0 +1,11 @@
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_pkg.sv
+ips/33_otp_trng_keymgr/rtl/otp_ctrl.sv
+ips/33_otp_trng_keymgr/rtl/trng_ent_soft.sv
+ips/33_otp_trng_keymgr/rtl/trng_cond.sv
+ips/33_otp_trng_keymgr/rtl/key_vault.sv
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_core.sv
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_wb.sv
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_axi.sv
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_tl.sv
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_apb.sv
+ips/33_otp_trng_keymgr/rtl/otp_trng_keymgr_top.sv

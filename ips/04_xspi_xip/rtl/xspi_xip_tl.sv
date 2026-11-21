@@ -38,19 +38,24 @@ module xspi_xip_tl
   );
 
   xspi_xip_core u_core (
-    .clk_i         (clk_i),
-    .rst_ni        (rst_ni),
-    .csr_req_i     (csr_req),
-    .csr_rsp_o     (csr_rsp),
-    .mem_win_req_i (mem_req),
-    .mem_win_rsp_o (mem_rsp),
-    .xspi_sck_o   (xspi_sck_o),
-    .xspi_cs_no   (xspi_cs_no),
-    .xspi_io_i    (xspi_io_i),
-    .xspi_io_o    (xspi_io_o),
-    .xspi_io_oe_o (xspi_io_oe_o),
-    .xspi_dqs_i   (xspi_dqs_i),
-    .irq_o        (irq_o)
+    .clk_i           (clk_i),
+    .rst_ni          (rst_ni),
+    .csr_req_i       (csr_req),
+    .csr_rsp_o       (csr_rsp),
+    .mem_win_req_i   (mem_req),
+    .mem_win_rsp_o   (mem_rsp),
+    .xspi_sck_o      (xspi_sck_o),
+    .xspi_cs_no      (xspi_cs_no),
+    .xspi_cs_ext_no  (),
+    .xspi_io_i       (xspi_io_i),
+    .xspi_io_o       (xspi_io_o),
+    .xspi_io_oe_o    (xspi_io_oe_o),
+    .xspi_dqs_i      (xspi_dqs_i),
+    .xspi_dqs_o      (),
+    .xspi_dqs_oe_o   (),
+    .dma_tx_req_o    (),
+    .dma_rx_req_o    (),
+    .irq_o           (irq_o)
   );
 
 endmodule : xspi_xip_tl

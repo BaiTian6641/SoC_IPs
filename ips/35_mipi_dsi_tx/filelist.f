@@ -1,0 +1,12 @@
+ips/35_mipi_dsi_tx/rtl/dsi_pkg.sv
+ips/35_mipi_dsi_tx/rtl/dsi_pkt_builder.sv
+ips/35_mipi_dsi_tx/rtl/dsi_lane_dist.sv
+ips/35_mipi_dsi_tx/rtl/dsi_video_gen.sv
+ips/35_mipi_dsi_tx/rtl/dsi_cmd_lp.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dphy_tx_soft.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dsi_tx_core.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dsi_tx_wb.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dsi_tx_axi.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dsi_tx_tl.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dsi_tx_apb.sv
+ips/35_mipi_dsi_tx/rtl/mipi_dsi_tx_top.sv

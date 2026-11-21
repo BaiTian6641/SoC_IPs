@@ -55,3 +55,16 @@ ips/28_crypto/tb/tb_crypto.sv
 ips/27_sdmmc/tb/tb_sd_card.sv
 ips/27_sdmmc/tb/tb_sdmmc.sv
 ips/27_sdmmc/tb/tb_sd_card_selftest.sv
+tb/tb_tech_cells.sv
+ips/04_xspi_xip/tb/tb_xspi_xip_v2.sv
+ips/28_crypto/tb/tb_crypto_v2.sv
+ips/32_pka/tb/tb_pka.sv
+ips/33_otp_trng_keymgr/tb/tb_otp_trng_keymgr.sv
+ips/34_mipi_csi2_rx/tb/tb_mipi_csi2_rx.sv
+ips/35_mipi_dsi_tx/tb/tb_mipi_dsi_tx.sv
+ips/36_soc_sysctrl/tb/tb_soc_sysctrl.sv
+ips/37_ipc_debug/tb/tb_ipc_debug.sv
+ips/38_ddr_ctrl/tb/tb_ddr_dram_model.sv
+ips/38_ddr_ctrl/tb/tb_ddr_ctrl.sv
+ips/39_serdes_combo/tb/tb_serdes_combo.sv
+ips/40_usb2_otg/tb/tb_usb2_otg.sv
