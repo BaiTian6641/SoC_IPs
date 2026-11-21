@@ -3,7 +3,11 @@
 
 module mem_to_wb_master
   import bus_pkg::*;
-(
+#(
+  // Number of times a beat is re-issued after the slave answers RTY before the
+  // beat is completed with an error response (WB B4 rule 3.xx: RTY = "try again").
+  parameter int unsigned RTY_LIMIT = 16
+) (
   input  logic     clk_i,
   input  logic     rst_ni,
   input  logic     abort_i = 1'b0,
@@ -18,7 +22,8 @@ module mem_to_wb_master
   typedef enum logic [1:0] {
     ST_IDLE,
     ST_BURST_BEAT,
-    ST_HOLD_RESP
+    ST_HOLD_RESP,
+    ST_RETRY
   } state_e;
 
   state_e      state_q;
@@ -34,20 +39,14 @@ module mem_to_wb_master
   logic [31:0] rdata_q;
   logic        err_q;
   logic        last_q;
+  logic [7:0]  rty_cnt_q;
 
-  logic [1:0] wb_bte_val;
-  always_comb begin
-    if (!burst_wrap_q) begin
-      wb_bte_val = 2'b00;
-    end else begin
-      unique case (len_q)
-        8'd3:    wb_bte_val = 2'b01;
-        8'd7:    wb_bte_val = 2'b10;
-        8'd15:   wb_bte_val = 2'b11;
-        default: wb_bte_val = 2'b00;
-      endcase
-    end
-  end
+  // Every beat is a stand-alone *classic* Wishbone cycle (CTI = 000, STB held until
+  // ACK/ERR/RTY).  Registered-feedback tags (CTI = INC/EOB) would make a pipelined
+  // slave (e.g. wb_to_csr, wb_reg_slice, wb_xbar) treat every STB cycle as a new
+  // request, i.e. each beat would be executed twice (audit AR-01).  Burst address
+  // sequencing (INCR / WRAP of any legal length) is done here with axi_next_addr().
+  wire [1:0] burst_kind = burst_wrap_q ? AXI_BURST_WRAP : AXI_BURST_INCR;
 
   always_comb begin
     wb_o      = '0;
@@ -65,8 +64,8 @@ module mem_to_wb_master
         wb_o.adr = addr_q;
         wb_o.dat = wdata_q;
         wb_o.sel = wstrb_q;
-        wb_o.cti = (beats_rem_q == 8'd0) ? WB_CTI_EOB : WB_CTI_INC;
-        wb_o.bte = wb_bte_val;
+        wb_o.cti = WB_CTI_CLASSIC;
+        wb_o.bte = 2'b00;
       end
 
       ST_HOLD_RESP: begin
@@ -100,10 +99,12 @@ module mem_to_wb_master
       rdata_q      <= '0;
       err_q        <= 1'b0;
       last_q       <= 1'b0;
+      rty_cnt_q    <= '0;
     end else if (abort_i) begin
-      state_q <= ST_IDLE;
-      last_q  <= 1'b0;
-      err_q   <= 1'b0;
+      state_q   <= ST_IDLE;
+      last_q    <= 1'b0;
+      err_q     <= 1'b0;
+      rty_cnt_q <= '0;
     end else begin
       unique case (state_q)
         ST_IDLE: begin
@@ -118,17 +119,35 @@ module mem_to_wb_master
             size_q       <= mem_req_i.size;
             id_q         <= mem_req_i.id;
             err_q        <= 1'b0;
+            rty_cnt_q    <= '0;
             state_q      <= ST_BURST_BEAT;
           end
         end
 
         ST_BURST_BEAT: begin
           if (wb_i.ack || wb_i.err) begin
-            rdata_q <= wb_i.dat;
-            err_q   <= err_q | wb_i.err;
-            last_q  <= (beats_rem_q == 8'd0);
-            state_q <= ST_HOLD_RESP;
+            rdata_q   <= wb_i.dat;
+            err_q     <= err_q | wb_i.err;
+            last_q    <= (beats_rem_q == 8'd0);
+            rty_cnt_q <= '0;
+            state_q   <= ST_HOLD_RESP;
+          end else if (wb_i.rty) begin
+            if (rty_cnt_q >= 8'(RTY_LIMIT)) begin
+              // give up: complete the beat with an error
+              rdata_q   <= '0;
+              err_q     <= 1'b1;
+              last_q    <= (beats_rem_q == 8'd0);
+              rty_cnt_q <= '0;
+              state_q   <= ST_HOLD_RESP;
+            end else begin
+              rty_cnt_q <= rty_cnt_q + 8'd1;
+              state_q   <= ST_RETRY;   // drop CYC/STB for one cycle, then re-issue
+            end
           end
+        end
+
+        ST_RETRY: begin
+          state_q <= ST_BURST_BEAT;
         end
 
         ST_HOLD_RESP: begin
@@ -138,7 +157,7 @@ module mem_to_wb_master
                 state_q <= ST_IDLE;
               end else begin
                 beats_rem_q <= beats_rem_q - 8'd1;
-                addr_q      <= wb_next_addr(addr_q, WB_CTI_INC, wb_bte_val, size_q);
+                addr_q      <= axi_next_addr(addr_q, size_q, burst_kind, len_q);
                 state_q     <= ST_BURST_BEAT;
               end
             end
@@ -147,7 +166,7 @@ module mem_to_wb_master
               if (mem_req_i.resp_ready) state_q <= ST_IDLE;
             end else if (mem_req_i.valid) begin
               beats_rem_q <= beats_rem_q - 8'd1;
-              addr_q      <= wb_next_addr(addr_q, WB_CTI_INC, wb_bte_val, size_q);
+              addr_q      <= axi_next_addr(addr_q, size_q, burst_kind, len_q);
               wdata_q     <= mem_req_i.wdata;
               wstrb_q     <= mem_req_i.wstrb;
               state_q     <= ST_BURST_BEAT;

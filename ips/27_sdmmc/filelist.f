@@ -1,0 +1,12 @@
+ips/27_sdmmc/rtl/sdmmc_pkg.sv
+ips/27_sdmmc/rtl/sdmmc_clkgen.sv
+ips/27_sdmmc/rtl/sdmmc_cd_filter.sv
+ips/27_sdmmc/rtl/sdmmc_cmd_engine.sv
+ips/27_sdmmc/rtl/sdmmc_data_engine.sv
+ips/27_sdmmc/rtl/sdmmc_dma.sv
+ips/27_sdmmc/rtl/sdmmc_core.sv
+ips/27_sdmmc/rtl/sdmmc_wb.sv
+ips/27_sdmmc/rtl/sdmmc_axi.sv
+ips/27_sdmmc/rtl/sdmmc_tl.sv
+ips/27_sdmmc/rtl/sdmmc_apb.sv
+ips/27_sdmmc/rtl/sdmmc_top.sv

@@ -312,7 +312,6 @@ module smart_switch_interconnect
   logic [TOTAL_SLAVES-1:0][TOTAL_MASTERS-1:0] s_arb_req, s_arb_gnt;
   logic [TOTAL_SLAVES-1:0][M_IDX_W-1:0]       s_arb_win;
   logic [TOTAL_SLAVES-1:0]                    s_arb_vld;
-  logic [TOTAL_SLAVES-1:0]                    s_locked_q;
   logic [TOTAL_SLAVES-1:0][15:0]              s_wdog_q;
 
   for (genvar s = 0; s < TOTAL_SLAVES; s++) begin : gen_smart_arb
@@ -327,7 +326,7 @@ module smart_switch_interconnect
       .rst_ni  (rst_ni),
       .req_i   (s_arb_req[s]),
       .qos_i   (eff_qos),
-      .lock_i  (s_locked_q[s]),
+      .lock_i  (s_arb_vld[s] && !(s_norm_rsp[s].ready || s_timeout[s])),  // combinational lock from first granted cycle (AR-08)
       .ack_i   (s_norm_rsp[s].ready || s_timeout[s]),
       .gnt_o   (s_arb_gnt[s]),
       .idx_o   (s_arb_win[s]),
@@ -336,14 +335,11 @@ module smart_switch_interconnect
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
-        s_locked_q[s] <= 1'b0;
         s_wdog_q[s]   <= '0;
       end else begin
         if (s_arb_vld[s] && !(s_norm_rsp[s].ready || s_timeout[s])) begin
-          s_locked_q[s] <= 1'b1;
           s_wdog_q[s]   <= s_wdog_q[s] + 16'd1;
         end else begin
-          s_locked_q[s] <= 1'b0;
           s_wdog_q[s]   <= '0;
         end
       end
@@ -392,9 +388,8 @@ module smart_switch_interconnect
       txn_cnt_q <= '0;
       err_cnt_q <= '0;
     end else begin
-      int t_inc, e_inc;
-      t_inc = 0;
-      e_inc = 0;
+      automatic int t_inc = 0;
+      automatic int e_inc = 0;
       for (int m = 0; m < TOTAL_MASTERS; m++) begin
         if (m_norm_req[m].valid && m_norm_rsp[m].ready) begin
           t_inc = t_inc + 1;

@@ -304,6 +304,7 @@ module spi_core
       8'h08: csr_rsp_o.rdata = {27'd0, (state_q != ST_IDLE), rx_empty, rx_full, tx_empty, tx_full};
       8'h0C: csr_rsp_o.rdata = {29'd0, int_en_q};
       8'h10: csr_rsp_o.rdata = {29'd0, int_stat_q};
+      8'h14: csr_rsp_o.rdata = '0; // TX_DATA (WO)
       8'h18: csr_rsp_o.rdata = rx_rdata;
       8'h1C: csr_rsp_o.rdata = {16'd0, timing_q};
       default: csr_rsp_o.err = csr_req_i.valid;
@@ -318,10 +319,6 @@ module spi_core
       int_en_q   <= '0;
       int_stat_q <= '0;
     end else begin
-      int_stat_q[0] <= !rx_empty;
-      int_stat_q[1] <= tx_empty;
-      if (xfer_done_pulse) int_stat_q[2] <= 1'b1;
-
       if (csr_req_i.valid && csr_req_i.write) begin
         unique case (reg_off)
           8'h00: ctrl_q     <= ip_common_pkg::apply_wstrb(ctrl_q, csr_req_i.wdata, csr_req_i.wstrb);
@@ -332,6 +329,11 @@ module spi_core
           default: ;
         endcase
       end
+
+      // Apply hardware status updates after CSR W1C so a coincident xfer_done_pulse is never lost
+      int_stat_q[0] <= !rx_empty;
+      int_stat_q[1] <= tx_empty;
+      if (xfer_done_pulse) int_stat_q[2] <= 1'b1;
     end
   end
 

@@ -1,0 +1,30 @@
+.program pwm_gen
+.side_set 1
+; Hardware-loop PWM generator. Pulls 32-bit word: {low_cnt[15:0], high_cnt[15:0]} (each >= 1).
+; High ticks = high_cnt + 1, Low ticks = low_cnt + 4.
+.wrap_target
+    pull block          side 0
+    out  y, 16          side 0      ; Y = low_cnt  (out_right=0: high 16 bits first)
+    out  x, 16          side 0      ; X = high_cnt
+    loop x              side 1
+      nop               side 1
+    endloop
+    loop y              side 0
+      nop               side 0
+    endloop
+    nop                 side 0      ; clean wrap tail (safe even if y==0)
+.wrap
+
+.program pulse_meas
+.origin 16
+; Measures high pulse width on in_base/jmp_pin (2 ticks per count + 2 ticks entry).
+.wrap_target
+    wait 0 pin 0
+    wait 1 pin 0
+    set  x, 0
+count_hi:
+    add  x, 1
+    jmp  pin, count_hi
+    mov  isr, x
+    push noblock
+.wrap

@@ -1,0 +1,12 @@
+.program bus8080
+.side_set 1
+; Intel 8080 8-bit parallel write bus (4 bytes per 32-bit FIFO word).
+; out_base = D0 (out_count=8), side_base = WR# (active low, idle high).
+; out_right=1 (LSB byte first), autopull=0.
+.wrap_target
+    pull block          side 1      ; wait for word with WR#=1
+    loop 4              side 1      ; keep WR#=1 on loop setup tick
+      out pins, 8       side 0 [1]  ; drive D[7:0], WR#=0 for 2 ticks
+      nop               side 1      ; rising edge of WR#=1 latches data
+    endloop
+.wrap

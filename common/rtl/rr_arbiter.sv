@@ -4,7 +4,7 @@
 module rr_arbiter #(
   parameter int unsigned N            = 4,
   parameter bit          ENABLE_AGING = 1'b1,
-  parameter int unsigned AGING_MAX    = 16,
+  parameter int unsigned AGING_MAX    = 16,   // must be <= 255 (8-bit wait counters)
   parameter int unsigned IDX_W        = (N <= 1) ? 1 : $clog2(N)
 ) (
   input  logic               clk_i,
@@ -46,7 +46,9 @@ module rr_arbiter #(
     idx_o   = '0;
     valid_o = 1'b0;
 
-    if (locked_q && req_i[locked_idx_q]) begin
+    // A registered lock owns the grant until lock_i falls, even if the owner's request
+    // bubbles low for a cycle (audit AR-11: otherwise another requester stole a locked burst).
+    if (locked_q) begin
       gnt_o[locked_idx_q] = 1'b1;
       idx_o                = locked_idx_q;
       valid_o              = 1'b1;

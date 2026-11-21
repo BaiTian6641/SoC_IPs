@@ -48,10 +48,27 @@ module hyperram_ctrl_core
   logic [15:0] reg_dat_q;
   logic        lat_2x_det_q, reg_done_q;
 
-  wire enable       = ctrl_q[0];
+  // Pending REG_CMD trigger (latched so it is never lost while the FSM is busy or arbitrating)
+  logic        reg_pend_q, reg_wr_q;
+  logic [15:0] reg_ra_q, reg_wd_q;
+
+  // RESET# output is a registered flop (glitch-free, low during rst_ni); a tRH hold-off counter keeps CS#
+  // high for >= RST_HOLD clocks after RESET# is released (HyperRAM tRH >= 400 ns, 128 clk covers <=320 MHz).
+  localparam logic [7:0] RST_HOLD = 8'd128;
+  logic       rst_out_nq;
+  logic [7:0] rst_hold_q;
+  logic       rwds_sync;
+  assign hbus_rst_no = rst_out_nq;
+
+  // RWDS is a device-driven asynchronous level during CA: 2-FF synchronize before the latency decision
+  edge_detect #(.WIDTH(1), .INIT(1'b0)) u_rwds_sync (
+    .clk_i(clk_i), .rst_ni(rst_ni), .async_i(hbus_rwds_i), .sync_o(rwds_sync), .rise_o(), .fall_o()
+  );
+
+  wire enable       = ctrl_q[0] && ctrl_q[3];                       // window/REG_CMD allowed
+  wire dev_ready    = enable && rst_out_nq && (rst_hold_q == 8'd0); // FSM may start a transaction
   wire fixed_2x     = ctrl_q[1];
   wire linear_burst = ctrl_q[2];
-  assign hbus_rst_no = rst_ni && ctrl_q[3];
 
   typedef enum logic [2:0] {
     ST_IDLE,
@@ -83,9 +100,10 @@ module hyperram_ctrl_core
   assign hbus_rwds_oe_o = rwds_oe_q;
 
   wire [7:0] reg_off  = csr_req_i.addr[7:0];
-  wire       reg_trig = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h08) && csr_req_i.wdata[0] && (state_q == ST_IDLE);
+  wire       reg_trig = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h08) && csr_req_i.wdata[0];
   wire [7:0] eff_div  = (timing_q[15:8] == 8'd0) ? 8'd1 : timing_q[15:8];
-  wire [7:0] base_lat = (timing_q[7:0]  == 8'd0) ? 8'd6 : timing_q[7:0];
+  wire [7:0] lat_raw  = (timing_q[7:0]  == 8'd0) ? 8'd6 : timing_q[7:0];
+  wire [7:0] base_lat = (lat_raw > 8'd31) ? 8'd31 : lat_raw; // clamp: 2x latency (4*base) must fit lat_cnt_q
 
   function automatic logic [47:0] build_ca(
     input logic        is_rd,
@@ -129,13 +147,30 @@ module hyperram_ctrl_core
       rdata_buf_q      <= '0;
       wstrb_buf_q      <= '0;
       mem_done_pulse_q <= 1'b0;
+      reg_pend_q       <= 1'b0;
+      reg_wr_q         <= 1'b0;
+      reg_ra_q         <= '0;
+      reg_wd_q         <= '0;
+      rst_out_nq       <= 1'b0;
+      rst_hold_q       <= RST_HOLD;
     end else begin
       mem_done_pulse_q <= 1'b0;
+
+      // RESET# pin register + tRH hold-off after release
+      rst_out_nq <= ctrl_q[3];
+      if (!rst_out_nq) rst_hold_q <= RST_HOLD;
+      else if (rst_hold_q != 8'd0) rst_hold_q <= rst_hold_q - 8'd1;
 
       if (csr_req_i.valid && csr_req_i.write) begin
         unique case (reg_off)
           8'h00: ctrl_q    <= ip_common_pkg::apply_wstrb(ctrl_q, csr_req_i.wdata, csr_req_i.wstrb);
           8'h04: timing_q  <= csr_req_i.wdata;
+          8'h08: if (csr_req_i.wdata[0] && enable && !reg_pend_q) begin
+                   reg_pend_q <= 1'b1;
+                   reg_wr_q   <= csr_req_i.wdata[1];
+                   reg_ra_q   <= csr_req_i.wdata[31:16];
+                   reg_wd_q   <= reg_dat_q;
+                 end
           8'h0C: reg_dat_q <= csr_req_i.wdata[15:0];
           8'h10: if (csr_req_i.wdata[2]) reg_done_q <= 1'b0;
           default: ;
@@ -148,7 +183,22 @@ module hyperram_ctrl_core
           cs_n_q    <= 1'b1;
           dq_oe_q   <= 1'b0;
           rwds_oe_q <= 1'b0;
-          if (enable && mem_win_req_i.valid && !mem_done_pulse_q) begin
+          if (dev_ready && reg_pend_q) begin
+            logic [47:0] ca;
+            ca             = build_ca(!reg_wr_q, 1'b1, 1'b1, {15'd0, reg_ra_q, 1'b0});
+            ca_pkt_q       <= {ca[39:0], 8'd0};
+            dq_out_q       <= ca[47:40];
+            dq_oe_q        <= 1'b1;
+            cs_n_q         <= 1'b0;
+            is_reg_space_q <= 1'b1;
+            is_read_q      <= !reg_wr_q;
+            wdata_buf_q    <= {16'd0, reg_wd_q};
+            wstrb_buf_q    <= 4'b0011;
+            byte_idx_q     <= 3'd0;
+            div_cnt_q      <= eff_div - 8'd1;
+            reg_pend_q     <= 1'b0;
+            state_q        <= ST_CA;
+          end else if (dev_ready && mem_win_req_i.valid && !mem_done_pulse_q) begin
             logic [47:0] ca;
             ca             = build_ca(!mem_win_req_i.write, 1'b0, linear_burst, {mem_win_req_i.addr[31:2], 2'b00});
             ca_pkt_q       <= {ca[39:0], 8'd0};
@@ -162,20 +212,6 @@ module hyperram_ctrl_core
             byte_idx_q     <= 3'd0;
             div_cnt_q      <= eff_div - 8'd1;
             state_q        <= ST_CA;
-          end else if (enable && reg_trig) begin
-            logic [47:0] ca;
-            ca             = build_ca(!csr_req_i.wdata[1], 1'b1, 1'b1, {15'd0, csr_req_i.wdata[31:16], 1'b0});
-            ca_pkt_q       <= {ca[39:0], 8'd0};
-            dq_out_q       <= ca[47:40];
-            dq_oe_q        <= 1'b1;
-            cs_n_q         <= 1'b0;
-            is_reg_space_q <= 1'b1;
-            is_read_q      <= !csr_req_i.wdata[1];
-            wdata_buf_q    <= {16'd0, reg_dat_q};
-            wstrb_buf_q    <= 4'b0011;
-            byte_idx_q     <= 3'd0;
-            div_cnt_q      <= eff_div - 8'd1;
-            state_q        <= ST_CA;
           end
         end
 
@@ -186,9 +222,6 @@ module hyperram_ctrl_core
           end else begin
             div_cnt_q <= eff_div - 8'd1;
             ck_q      <= ~ck_q;
-            if (byte_idx_q == 3'd2) begin
-              lat_2x_det_q <= hbus_rwds_i || fixed_2x;
-            end
             if (byte_idx_q == 3'd5) begin
               byte_idx_q <= 3'd0;
               dq_oe_q    <= 1'b0;
@@ -200,7 +233,8 @@ module hyperram_ctrl_core
                 state_q    <= ST_WRITE_DDR;
               end else begin
                 logic two_x;
-                two_x     = hbus_rwds_i || fixed_2x;
+                two_x     = rwds_sync || fixed_2x;
+                lat_2x_det_q <= two_x;
                 // Count half-cycles = 2 * latency_clocks
                 lat_cnt_q <= (two_x ? (base_lat << 2) : (base_lat << 1)) - 8'd1;
                 state_q   <= ST_LATENCY;
@@ -328,9 +362,12 @@ module hyperram_ctrl_core
       8'h04: csr_rsp_o.rdata = timing_q;
       8'h08: csr_rsp_o.rdata = '0;
       8'h0C: csr_rsp_o.rdata = {16'd0, reg_dat_q};
-      8'h10: csr_rsp_o.rdata = {29'd0, reg_done_q, lat_2x_det_q, (state_q != ST_IDLE)};
+      8'h10: csr_rsp_o.rdata = {29'd0, reg_done_q, lat_2x_det_q, ((state_q != ST_IDLE) || reg_pend_q)};
       default: csr_rsp_o.err = csr_req_i.valid;
     endcase
+    // REG_CMD trigger is rejected when the controller is disabled / in reset or a trigger is still pending
+    if (csr_req_i.valid && csr_req_i.write && reg_off == 8'h08 && csr_req_i.wdata[0] && (!enable || reg_pend_q))
+      csr_rsp_o.err = 1'b1;
   end
 
   assign irq_o = reg_done_q;

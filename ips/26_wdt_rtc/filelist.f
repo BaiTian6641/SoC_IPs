@@ -1,0 +1,11 @@
+ips/26_wdt_rtc/rtl/wdt_rtc_pkg.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_rstsync.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_wdt.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_rtc.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_rtcif.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_core.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_wb.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_axi.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_tl.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_apb.sv
+ips/26_wdt_rtc/rtl/wdt_rtc_top.sv

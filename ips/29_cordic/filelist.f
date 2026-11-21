@@ -1,0 +1,11 @@
+ips/29_cordic/rtl/cordic_pkg.sv
+ips/29_cordic/rtl/cordic_preproc.sv
+ips/29_cordic/rtl/cordic_stage.sv
+ips/29_cordic/rtl/cordic_postproc.sv
+ips/29_cordic/rtl/cordic_engine.sv
+ips/29_cordic/rtl/cordic_core.sv
+ips/29_cordic/rtl/cordic_wb.sv
+ips/29_cordic/rtl/cordic_axi.sv
+ips/29_cordic/rtl/cordic_tl.sv
+ips/29_cordic/rtl/cordic_apb.sv
+ips/29_cordic/rtl/cordic_top.sv

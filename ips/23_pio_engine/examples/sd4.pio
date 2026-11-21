@@ -1,0 +1,22 @@
+.program sd4
+.side_set 1    ; SDCLK
+; SD-style 4-bit clocked bidirectional transfer:
+; Word 0 from TX = {rx_nibbles[15:0], tx_nibbles[15:0]} (each >= 1).
+; Sends tx_nibbles 4-bit nibbles (MSB-nibble first, out_right=0, autopull=1, pull_thresh=32),
+; switches D[3:0] to input, then captures rx_nibbles 4-bit nibbles (in_right=0, autopush=1, push_thresh=32).
+.wrap_target
+    pull block          side 0
+    out  x, 16          side 0      ; X = rx_nibbles (since out_right=0, high 16 bits first)
+    out  y, 16          side 0      ; Y = tx_nibbles
+    set  pindirs, 0x0F  side 0      ; drive D[3:0]
+    loop y
+      out pins, 4       side 0      ; launch nibble on SDCLK=0
+      nop               side 1      ; rising SDCLK=1 (card samples)
+    endloop
+    set  pindirs, 0x00  side 0      ; release D[3:0] to input
+    loop x
+      nop               side 1 [3]  ; SDCLK=1 (4 ticks for 2-FF sync settle)
+      in  pins, 4       side 0 [3]  ; sample D[3:0] on SDCLK=0
+    endloop
+    nop                 side 0      ; clean wrap tail (safe even if x==0)
+.wrap

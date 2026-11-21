@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// xspi_xip_top.sv - Parameterized Tri-Bus Wrapper (WB / AXI4 / TileLink) for xspi_xip_core
+// xspi_xip_top.sv - Parameterized Tri-Bus Wrapper (WB / AXI4 / TileLink / APB4) for xspi_xip_core
 
 module xspi_xip_top
   import bus_pkg::*;
@@ -24,6 +24,10 @@ module xspi_xip_top
   output axi4_s2m_t axi_mem_o,
   input  tl_m2s_t   tl_mem_i,
   output tl_s2m_t   tl_mem_o,
+  input  apb_m2s_t  apb_csr_i,
+  output apb_s2m_t  apb_csr_o,
+  input  apb_m2s_t  apb_mem_i,
+  output apb_s2m_t  apb_mem_o,
 
   output logic       xspi_sck_o,
   output logic       xspi_cs_no,
@@ -35,6 +39,8 @@ module xspi_xip_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign apb_csr_o = '0; assign apb_mem_o = '0;
+    wire unused_bus = &{1'b0, apb_csr_i, apb_mem_i};
     assign axi_csr_o = '0; assign axi_mem_o = '0;
     assign tl_csr_o  = '0; assign tl_mem_o  = '0;
     xspi_xip_wb u_imp (
@@ -50,6 +56,8 @@ module xspi_xip_top
     .irq_o        (irq_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign apb_csr_o = '0; assign apb_mem_o = '0;
+    wire unused_bus = &{1'b0, apb_csr_i, apb_mem_i};
     assign wb_csr_o  = '0; assign wb_mem_o  = '0;
     assign axi_csr_o = '0; assign axi_mem_o = '0;
     xspi_xip_tl u_imp (
@@ -64,7 +72,26 @@ module xspi_xip_top
     .xspi_dqs_i   (xspi_dqs_i),
     .irq_o        (irq_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign wb_csr_o  = '0; assign wb_mem_o  = '0;
+    assign axi_csr_o = '0; assign axi_mem_o = '0;
+    assign tl_csr_o  = '0; assign tl_mem_o  = '0;
+    wire unused_bus = &{1'b0, wb_csr_i, wb_mem_i, axi_csr_i, axi_mem_i, tl_csr_i, tl_mem_i};
+    xspi_xip_apb u_imp (
+      .clk_i(clk_i), .rst_ni(rst_ni),
+      .apb_csr_i(apb_csr_i), .apb_csr_o(apb_csr_o),
+      .apb_mem_i(apb_mem_i), .apb_mem_o(apb_mem_o),
+    .xspi_sck_o   (xspi_sck_o),
+    .xspi_cs_no   (xspi_cs_no),
+    .xspi_io_i    (xspi_io_i),
+    .xspi_io_o    (xspi_io_o),
+    .xspi_io_oe_o (xspi_io_oe_o),
+    .xspi_dqs_i   (xspi_dqs_i),
+    .irq_o        (irq_o)
+    );
   end else begin : gen_axi
+    assign apb_csr_o = '0; assign apb_mem_o = '0;
+    wire unused_bus = &{1'b0, apb_csr_i, apb_mem_i};
     assign wb_csr_o = '0; assign wb_mem_o = '0;
     assign tl_csr_o = '0; assign tl_mem_o = '0;
     xspi_xip_axi u_imp (

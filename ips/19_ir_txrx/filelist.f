@@ -1,0 +1,10 @@
+ips/19_ir_txrx/rtl/ir_txrx_pkg.sv
+ips/19_ir_txrx/rtl/ir_txrx_cdet.sv
+ips/19_ir_txrx/rtl/ir_txrx_tx.sv
+ips/19_ir_txrx/rtl/ir_txrx_rx.sv
+ips/19_ir_txrx/rtl/ir_txrx_core.sv
+ips/19_ir_txrx/rtl/ir_txrx_wb.sv
+ips/19_ir_txrx/rtl/ir_txrx_axi.sv
+ips/19_ir_txrx/rtl/ir_txrx_tl.sv
+ips/19_ir_txrx/rtl/ir_txrx_apb.sv
+ips/19_ir_txrx/rtl/ir_txrx_top.sv

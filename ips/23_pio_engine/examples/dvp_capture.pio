@@ -1,0 +1,15 @@
+.program dvp_capture
+; Camera DVP-style 8-bit parallel capture (VSYNC=gpio 10, HREF=gpio 9 / jmp_pin=9, PCLK=gpio 8).
+; in_base=0 (D[7:0]), in_count=8, in_right=0, autopush=1 (push_thresh=32).
+.wrap_target
+    wait 1 gpio 10                  ; wait for VSYNC high
+    wait 0 gpio 10                  ; wait for VSYNC low (start of active frame)
+line_wait:
+    wait 1 gpio 9                   ; wait for HREF high
+pixel_loop:
+    jmp npin, line_wait             ; if HREF went low, wait for next line
+    wait 1 gpio 8                   ; sample on rising PCLK
+    in   pins, 8
+    wait 0 gpio 8                   ; wait PCLK low before next pixel
+    jmp pixel_loop
+.wrap

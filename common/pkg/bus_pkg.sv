@@ -8,7 +8,8 @@ package bus_pkg;
   typedef enum int unsigned {
     BUS_WISHBONE = 0,
     BUS_AXI4     = 1,
-    BUS_TILELINK = 2
+    BUS_TILELINK = 2,
+    BUS_APB      = 3   // AMBA APB4 slave side. DMA-capable IPs use an AXI4 master port (m_axi_*) in this mode.
   } bus_proto_e;
 
   // -------------------------------------------------------------------------
@@ -196,6 +197,37 @@ package bus_pkg;
     logic [31:0] d_data;
     logic        d_corrupt;
   } tl_s2m_t;
+
+  // -------------------------------------------------------------------------
+  // AMBA APB4 (IHI0024C) 32-bit Bundles (one requester <-> one completer)
+  //   m2s: paddr/psel/penable/pwrite/pprot/pwdata/pstrb      (requester -> completer)
+  //   s2m: pready/prdata/pslverr                             (completer -> requester)
+  // Not included: APB5 optional signals (pwakeup, pauser, pwuser, pruser, pbuser,
+  // pnse); tie them off at the system boundary if an APB5 peer is attached.
+  // Conventions: PSEL & !PENABLE = SETUP phase, PSEL & PENABLE = ACCESS phase.
+  // pready/prdata/pslverr are only qualified in the ACCESS phase; an idle
+  // completer drives pready = 1, prdata = 0, pslverr = 0.
+  // pstrb must be 4'b0000 for reads.  pprot: [0] privileged, [1] non-secure,
+  // [2] instruction access.
+  // -------------------------------------------------------------------------
+  typedef struct packed {
+    logic [31:0] paddr;
+    logic        psel;
+    logic        penable;
+    logic        pwrite;
+    logic [2:0]  pprot;
+    logic [31:0] pwdata;
+    logic [3:0]  pstrb;
+  } apb_m2s_t;
+
+  typedef struct packed {
+    logic        pready;
+    logic [31:0] prdata;
+    logic        pslverr;
+  } apb_s2m_t;
+
+  // Idle response of a completer that is not selected / not in ACCESS phase
+  localparam apb_s2m_t APB_S2M_IDLE = '{pready: 1'b1, prdata: 32'd0, pslverr: 1'b0};
 
   // Address Map Entry for Crossbars & Smart Switch
   typedef struct packed {

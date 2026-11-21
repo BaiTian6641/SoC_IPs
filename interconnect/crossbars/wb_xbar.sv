@@ -64,17 +64,20 @@ module wb_xbar
 
   logic [NUM_MASTERS-1:0][NUM_SLAVES-1:0] sel_slave;
   logic [NUM_MASTERS-1:0]                 dec_err;
+  logic [NUM_MASTERS-1:0]                 m_tgt_stall;
   logic [NUM_MASTERS-1:0]                 dec_err_ack_q;
   logic [NUM_MASTERS-1:0][4:0]            err_pipe_cnt_q;
 
-  // Address decode per master (maintains slave lock while pipelined beats remain in flight)
+  // Address decode per master (maintains slave lock while pipelined beats remain in flight;
+  // stalls a beat targeting a different slave/err-slave until earlier beats drain for WB in-order semantics, AR-13)
   always_comb begin
     for (int m = 0; m < NUM_MASTERS; m++) begin
       automatic logic hit = 1'b0;
       automatic logic [S_IDX_W-1:0] dec_tgt = S_IDX_W'(ERR_SLAVE);
-      sel_slave[m] = '0;
-      dec_err[m]   = 1'b0;
-      cur_tgt[m]   = S_IDX_W'(ERR_SLAVE);
+      sel_slave[m]   = '0;
+      dec_err[m]     = 1'b0;
+      m_tgt_stall[m] = 1'b0;
+      cur_tgt[m]     = S_IDX_W'(ERR_SLAVE);
 
       if (m_s[m].cyc && m_s[m].stb) begin
         for (int s = 0; s < NUM_SLAVES; s++) begin
@@ -87,8 +90,9 @@ module wb_xbar
 
       if (m_s[m].cyc) begin
         if (err_pipe_cnt_q[m] != 5'd0) begin
-          dec_err[m] = 1'b1;
-          cur_tgt[m] = S_IDX_W'(ERR_SLAVE);
+          dec_err[m]     = 1'b1;
+          cur_tgt[m]     = S_IDX_W'(ERR_SLAVE);
+          m_tgt_stall[m] = m_s[m].stb && ((dec_tgt != S_IDX_W'(ERR_SLAVE)) || (m_s[m].cti == WB_CTI_CLASSIC));
         end else if (inflight_cnt_q[m] != 5'd0) begin
           cur_tgt[m] = last_tgt_q[m];
           if (last_tgt_q[m] == S_IDX_W'(ERR_SLAVE)) begin
@@ -96,6 +100,10 @@ module wb_xbar
           end else begin
             sel_slave[m][int'(last_tgt_q[m])] = 1'b1;
           end
+          m_tgt_stall[m] = m_s[m].stb &&
+                           ((dec_tgt != last_tgt_q[m]) ||
+                            (m_s[m].cti == WB_CTI_CLASSIC) ||
+                            (inflight_cnt_q[m] == 5'd31));
         end else if (m_s[m].stb) begin
           cur_tgt[m] = dec_tgt;
           if (dec_tgt == S_IDX_W'(ERR_SLAVE)) begin
@@ -120,17 +128,23 @@ module wb_xbar
       assign s_req[s][m] = sel_slave[m][s];
     end
 
-    wire win_rsp = s_s[s].ack || s_s[s].err || s_s[s].rty || s_timeout[s];
-    wire win_cyc = m_s[s_win_idx[s]].cyc;
-    wire win_stb = m_s[s_win_idx[s]].stb;
+    wire win_rsp       = s_s[s].ack || s_s[s].err || s_s[s].rty || s_timeout[s];
+    wire win_cyc       = m_s[s_win_idx[s]].cyc;
+    wire win_stb       = s_m[s].stb;
+    wire win_classic   = (s_m[s].cti == WB_CTI_CLASSIC);
     wire [4:0] win_inf = inflight_cnt_q[s_win_idx[s]];
+    wire win_pipe_fire = win_stb && !win_classic && !s_s[s].stall;
+    wire [5:0] next_inf = {1'b0, win_inf} + 6'(win_pipe_fire)
+                          - 6'(((win_inf != 5'd0) || win_pipe_fire) && win_rsp);
 
     assign s_timeout[s] = (TIMEOUT_CYCLES != 0) && (s_wdog_q[s] >= 16'(TIMEOUT_CYCLES));
 
-    wire lock_bus = s_valid[s] && win_cyc &&
-                    ((win_inf > 5'd1) ||
-                     ((win_inf == 5'd1) && (win_stb || !win_rsp)) ||
-                     ((win_inf == 5'd0) && win_stb && !win_rsp));
+    // Hold lock strictly while beats remain outstanding on the next cycle, while a pipelined
+    // beat is stalled by the slave (WB B4 Rule 3.60), or while a classic beat awaits response (AR-14)
+    wire lock_bus = s_valid[s] && win_cyc && !s_timeout[s] &&
+                    ((next_inf != 6'd0) ||
+                     (win_stb && !win_classic && s_s[s].stall) ||
+                     ((win_inf == 5'd0) && win_stb && win_classic && !win_rsp));
 
     rr_arbiter #(
       .N (NUM_MASTERS)
@@ -140,15 +154,16 @@ module wb_xbar
       .req_i   (s_req[s]),
       .qos_i   (m_qos_i),
       .lock_i  (lock_bus),
-      .ack_i   (s_s[s].ack || s_s[s].err || s_timeout[s]),
+      .ack_i   (s_s[s].ack || s_s[s].err || s_s[s].rty || s_timeout[s]),
       .gnt_o   (s_gnt[s]),
       .idx_o   (s_win_idx[s]),
       .valid_o (s_valid[s])
     );
 
     always_comb begin
-      if (s_valid[s] && !s_timeout[s]) begin
-        s_m[s] = m_s[s_win_idx[s]];
+      if (s_valid[s] && !s_timeout[s] && sel_slave[s_win_idx[s]][s]) begin
+        s_m[s]     = m_s[s_win_idx[s]];
+        s_m[s].stb = m_s[s_win_idx[s]].stb && !m_tgt_stall[s_win_idx[s]];
       end else begin
         s_m[s] = '0;
       end
@@ -182,21 +197,22 @@ module wb_xbar
           inflight_cnt_q[m] <= 5'd0;
         end else begin
           // Classic decode error 1-cycle ack/err
-          dec_err_ack_q[m] <= dec_err[m] && (m_s[m].cti == WB_CTI_CLASSIC) && !dec_err_ack_q[m];
+          dec_err_ack_q[m] <= dec_err[m] && (err_pipe_cnt_q[m] == 5'd0) &&
+                              (m_s[m].cti == WB_CTI_CLASSIC) && !dec_err_ack_q[m];
 
           // Pipelined decode error beat queue
-          if (dec_err[m] && (m_s[m].cti != WB_CTI_CLASSIC)) begin
-            automatic logic err_req = m_s[m].stb && !m_m[m].stall;
+          begin
+            automatic logic err_req = dec_err[m] && (m_s[m].cti != WB_CTI_CLASSIC) &&
+                                      !m_tgt_stall[m] && m_s[m].stb && !m_m[m].stall;
             automatic logic err_rsp = (err_pipe_cnt_q[m] != 5'd0);
             err_pipe_cnt_q[m] <= err_pipe_cnt_q[m] + 5'(err_req) - 5'(err_rsp);
-          end else if (err_pipe_cnt_q[m] != 5'd0) begin
-            err_pipe_cnt_q[m] <= err_pipe_cnt_q[m] - 5'd1;
           end
 
           // Pipelined slave beat tracker
           if (!dec_err[m]) begin
             automatic logic req_fire = (m_s[m].cti != WB_CTI_CLASSIC) && m_s[m].stb && !m_m[m].stall;
-            automatic logic rsp_fire = (inflight_cnt_q[m] != 5'd0) && (m_m[m].ack || m_m[m].err || m_m[m].rty);
+            automatic logic rsp_fire = ((inflight_cnt_q[m] != 5'd0) || req_fire) &&
+                                       (m_m[m].ack || m_m[m].err || m_m[m].rty);
             if (req_fire && (inflight_cnt_q[m] == 5'd0)) begin
               last_tgt_q[m] <= cur_tgt[m];
             end
@@ -214,7 +230,7 @@ module wb_xbar
       if (dec_err[m]) begin
         if ((err_pipe_cnt_q[m] != 5'd0) || (m_s[m].cti != WB_CTI_CLASSIC)) begin
           m_m[m].err   = (err_pipe_cnt_q[m] != 5'd0);
-          m_m[m].stall = (err_pipe_cnt_q[m] >= 5'd16);
+          m_m[m].stall = m_tgt_stall[m] || (err_pipe_cnt_q[m] >= 5'd16);
           m_m[m].dat   = 32'hDEAD_DEC0;
         end else begin
           m_m[m].err   = dec_err_ack_q[m];
@@ -224,13 +240,16 @@ module wb_xbar
       end else begin
         automatic logic granted = 1'b0;
         for (int s = 0; s < NUM_SLAVES; s++) begin
-          if (s_gnt[s][m]) begin
+          if (s_gnt[s][m] && sel_slave[m][s]) begin
             granted = 1'b1;
             if (s_timeout[s]) begin
               m_m[m].err = 1'b1;
               m_m[m].dat = 32'hDEAD_713E;
             end else begin
               m_m[m] = s_s[s];
+            end
+            if (m_tgt_stall[m]) begin
+              m_m[m].stall = 1'b1;
             end
           end
         end

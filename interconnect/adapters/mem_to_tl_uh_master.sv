@@ -26,10 +26,23 @@ module mem_to_tl_uh_master
   logic        write_q;
   logic [31:0] addr_q, wdata_q;
   logic [3:0]  wstrb_q;
-  logic [7:0]  beats_rem_q;
+  logic [7:0]  beats_rem_q, len_q;
+  logic        wrap_q;
   logic [2:0]  size_q;
   logic [3:0]  id_q;
   logic        err_acc_q;
+
+  // TL requires a_address aligned to the message size and a_mask confined to the
+  // lanes covered by that size (audit AR-04): align the address, derive the lane mask.
+  logic [31:0] a_addr_al;
+  logic [3:0]  lane_mask;
+  always_comb begin
+    automatic logic [3:0] nbytes = 4'd1 << size_q;
+    automatic logic [1:0] off    = addr_q[1:0] & ~(nbytes[1:0] - 2'd1);
+    a_addr_al = addr_q & ~(32'(nbytes) - 32'd1);
+    lane_mask = 4'(((5'd1 << nbytes) - 5'd1)) << off;
+    if (size_q >= 3'd2) lane_mask = 4'hF;
+  end
 
   always_comb begin
     tl_o      = '0;
@@ -42,13 +55,13 @@ module mem_to_tl_uh_master
 
       ST_SEND_A: begin
         tl_o.a_valid   = 1'b1;
-        tl_o.a_opcode  = write_q ? ((wstrb_q == 4'hF) ? TL_OP_PUT_FULL_DATA : TL_OP_PUT_PARTIAL_DATA)
+        tl_o.a_opcode  = write_q ? (((wstrb_q & lane_mask) == lane_mask) ? TL_OP_PUT_FULL_DATA : TL_OP_PUT_PARTIAL_DATA)
                                  : TL_OP_GET;
         tl_o.a_param   = 3'd0;
         tl_o.a_size    = {1'b0, size_q};
         tl_o.a_source  = {4'd0, id_q};
-        tl_o.a_address = addr_q;
-        tl_o.a_mask    = write_q ? wstrb_q : 4'hF;
+        tl_o.a_address = a_addr_al;
+        tl_o.a_mask    = write_q ? (wstrb_q & lane_mask) : lane_mask;
         tl_o.a_data    = write_q ? wdata_q : '0;
         tl_o.a_corrupt = 1'b0;
       end
@@ -86,6 +99,8 @@ module mem_to_tl_uh_master
       wdata_q     <= '0;
       wstrb_q     <= '0;
       beats_rem_q <= '0;
+      len_q       <= '0;
+      wrap_q      <= 1'b0;
       size_q      <= '0;
       id_q        <= '0;
       err_acc_q   <= 1'b0;
@@ -101,6 +116,8 @@ module mem_to_tl_uh_master
             wdata_q     <= mem_req_i.wdata;
             wstrb_q     <= mem_req_i.wstrb;
             beats_rem_q <= mem_req_i.len;
+            len_q       <= mem_req_i.len;
+            wrap_q      <= mem_req_i.burst_wrap;
             size_q      <= mem_req_i.size;
             id_q        <= mem_req_i.id;
             err_acc_q   <= 1'b0;
@@ -120,7 +137,7 @@ module mem_to_tl_uh_master
               state_q <= ST_IDLE;
             end else begin
               beats_rem_q <= beats_rem_q - 8'd1;
-              addr_q      <= addr_q + (32'd1 << size_q);
+              addr_q      <= axi_next_addr(addr_q, size_q, wrap_q ? AXI_BURST_WRAP : AXI_BURST_INCR, len_q);
               err_acc_q   <= err_acc_q || tl_i.d_denied || tl_i.d_corrupt;
               if (write_q) begin
                 wdata_q <= mem_req_i.wdata;

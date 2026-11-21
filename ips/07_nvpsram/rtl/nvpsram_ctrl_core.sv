@@ -53,6 +53,17 @@ module nvpsram_ctrl_core
   logic [31:0] ctrl_q;
   logic [23:0] tcem_cfg_q;
   logic        nv_done_q, tcem_flag_q;
+  logic        wait_sync;
+
+  // 2-FF synchronizer on asynchronous external psram_wait_i input
+  edge_detect #(.WIDTH(1), .INIT(1'b0)) u_wait_sync (
+    .clk_i   (clk_i),
+    .rst_ni  (rst_ni),
+    .async_i (psram_wait_i),
+    .sync_o  (wait_sync),
+    .rise_o  (),
+    .fall_o  ()
+  );
 
   wire enable    = ctrl_q[0];
   wire qspi_sel  = ctrl_q[1];
@@ -60,7 +71,7 @@ module nvpsram_ctrl_core
   wire [3:0] qspi_dummy = ctrl_q[7:4];
   wire [7:0] acc_div    = (ctrl_q[15:8] == 8'd0) ? 8'd1 : ctrl_q[15:8];
 
-  typedef enum logic [3:0] {
+  typedef enum logic [2:0] {
     ST_IDLE,
     ST_PAR_H0,
     ST_PAR_TCEM_GAP,
@@ -231,7 +242,7 @@ module nvpsram_ctrl_core
 
         ST_PAR_H0: begin
           p_adv_nq <= 1'b1;
-          if (!psram_wait_i) begin
+          if (!wait_sync) begin
             if (div_cnt_q == 8'd0) begin
               if (!is_wr_q) rdata_q[15:0] <= psram_dq_i;
               // Check tCEM max CS low time guard before issuing second halfword
@@ -272,7 +283,7 @@ module nvpsram_ctrl_core
 
         ST_PAR_H1: begin
           p_adv_nq <= 1'b1;
-          if (!psram_wait_i) begin
+          if (!wait_sync) begin
             if (div_cnt_q == 8'd0) begin
               if (!is_wr_q) rdata_q[31:16] <= psram_dq_i;
               p_ce_nq   <= 1'b1;

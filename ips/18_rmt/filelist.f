@@ -1,0 +1,12 @@
+ips/18_rmt/rtl/rmt_pkg.sv
+ips/18_rmt/rtl/rmt_tick_div.sv
+ips/18_rmt/rtl/rmt_tx_eng.sv
+ips/18_rmt/rtl/rmt_rx_eng.sv
+ips/18_rmt/rtl/rmt_byte_enc.sv
+ips/18_rmt/rtl/rmt_ch.sv
+ips/18_rmt/rtl/rmt_core.sv
+ips/18_rmt/rtl/rmt_wb.sv
+ips/18_rmt/rtl/rmt_axi.sv
+ips/18_rmt/rtl/rmt_tl.sv
+ips/18_rmt/rtl/rmt_apb.sv
+ips/18_rmt/rtl/rmt_top.sv

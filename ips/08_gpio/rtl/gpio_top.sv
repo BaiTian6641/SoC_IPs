@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// gpio_top.sv - Parameterized Tri-Bus Wrapper (Wishbone B4 / AXI4 / TileLink) for gpio_core
+// gpio_top.sv - Parameterized Quad-Bus Wrapper (Wishbone B4 / AXI4 / TileLink / APB4) for gpio_core
 
 module gpio_top
   import bus_pkg::*;
@@ -17,6 +17,8 @@ module gpio_top
   output axi4_s2m_t axi_o,
   input  tl_m2s_t   tl_i,
   output tl_s2m_t   tl_o,
+  input  apb_m2s_t  apb_i,
+  output apb_s2m_t  apb_o,
 
   input  logic [NUM_PINS-1:0] gpio_i,
   output logic [NUM_PINS-1:0] gpio_o,
@@ -27,6 +29,7 @@ module gpio_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign apb_o = '0;
     assign axi_o = '0;
     assign tl_o  = '0;
     gpio_wb #(
@@ -44,6 +47,7 @@ module gpio_top
     .irq_o          (irq_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign apb_o = '0;
     assign wb_o  = '0;
     assign axi_o = '0;
     gpio_tl #(
@@ -60,7 +64,27 @@ module gpio_top
     .gpio_pull_up_o (gpio_pull_up_o),
     .irq_o          (irq_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign wb_o = '0;
+    assign axi_o = '0;
+    assign tl_o = '0;
+    gpio_apb #(
+    .NUM_PINS (NUM_PINS)
+  ) u_imp (
+      .clk_i  (clk_i),
+      .rst_ni (rst_ni),
+      .apb_i  (apb_i),
+      .apb_o  (apb_o),
+    .gpio_i         (gpio_i),
+    .gpio_o         (gpio_o),
+    .gpio_oe_o      (gpio_oe_o),
+    .gpio_pull_en_o (gpio_pull_en_o),
+    .gpio_pull_up_o (gpio_pull_up_o),
+    .irq_o          (irq_o)
+    );
+
   end else begin : gen_axi
+    assign apb_o = '0;
     assign wb_o = '0;
     assign tl_o = '0;
     gpio_axi #(

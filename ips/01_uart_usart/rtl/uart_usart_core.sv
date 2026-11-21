@@ -109,6 +109,7 @@ module uart_usart_core
   logic [4:0]  frac_acc_q;
   logic        tick_16x;
 
+  wire baud_wr_pulse = csr_req_i.valid && csr_req_i.write && (csr_req_i.addr[7:0] == 8'h04);
   wire [15:0] eff_div = (baud_div_q[19:4] == 16'd0) ? 16'd1 : baud_div_q[19:4];
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -117,7 +118,11 @@ module uart_usart_core
       frac_acc_q <= '0;
       tick_16x   <= 1'b0;
     end else begin
-      if (baud_cnt_q <= 16'd1) begin
+      if (baud_wr_pulse) begin
+        // New divisor takes effect immediately instead of after the old (possibly huge) period expires
+        baud_cnt_q <= 16'd1;
+        tick_16x   <= 1'b0;
+      end else if (baud_cnt_q <= 16'd1) begin
         logic [4:0] next_frac;
         next_frac  = {1'b0, frac_acc_q[3:0]} + {1'b0, baud_div_q[3:0]};
         frac_acc_q <= next_frac;
@@ -246,7 +251,11 @@ module uart_usart_core
   logic [3:0] rx_bit_idx_q;
   logic [8:0] rx_shreg_q;
   logic       rx_par_acc_q;
+  logic [1:0] rx_hist_q;      // previous two 16x samples (majority vote 3 samples around mid-bit)
+  logic       rx_brk_hold_q;  // break seen: wait for line idle before re-arming the start-bit hunt
   logic       ev_par_err, ev_frm_err, ev_ovr_err, ev_brk_det;
+  // 2-of-3 majority of the samples taken at 16x ticks 6, 7, 8 of the bit
+  wire        rx_maj = (rx_hist_q[1] & rx_hist_q[0]) | (rx_hist_q[0] & rx_sync) | (rx_hist_q[1] & rx_sync);
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -255,6 +264,8 @@ module uart_usart_core
       rx_bit_idx_q <= '0;
       rx_shreg_q   <= '0;
       rx_par_acc_q <= 1'b0;
+      rx_hist_q    <= 2'b11;
+      rx_brk_hold_q <= 1'b0;
       rx_push      <= 1'b0;
       rx_wdata     <= '0;
       ev_par_err   <= 1'b0;
@@ -268,10 +279,14 @@ module uart_usart_core
       ev_ovr_err <= 1'b0;
       ev_brk_det <= 1'b0;
 
+      if (tick_16x) rx_hist_q <= {rx_hist_q[0], rx_sync};
+
       if (!rx_en) begin
         rx_state_q <= RX_IDLE;
+        rx_brk_hold_q <= 1'b0;
       end else if (rx_state_q == RX_IDLE) begin
-        if (!rx_sync) begin
+        if (rx_sync) rx_brk_hold_q <= 1'b0;
+        if (!rx_sync && !rx_brk_hold_q) begin
           rx_os_cnt_q  <= 4'd0;
           rx_par_acc_q <= 1'b0;
           rx_shreg_q   <= '0;
@@ -290,22 +305,26 @@ module uart_usart_core
             rx_os_cnt_q <= rx_os_cnt_q + 4'd1;
           end
         end else begin
-          if (rx_os_cnt_q == 4'd7) begin
+          if (rx_os_cnt_q == 4'd8) begin
             unique case (rx_state_q)
               RX_BITS: begin
-                rx_shreg_q[rx_bit_idx_q] <= rx_sync;
-                rx_par_acc_q             <= rx_par_acc_q ^ rx_sync;
+                rx_shreg_q[rx_bit_idx_q] <= rx_maj;
+                rx_par_acc_q             <= rx_par_acc_q ^ rx_maj;
               end
               RX_PARITY: begin
                 logic exp_par;
                 exp_par = (par_cfg == 2'd1) ? rx_par_acc_q :
                           (par_cfg == 2'd2) ? ~rx_par_acc_q : 1'b0;
-                if (rx_sync != exp_par) ev_par_err <= 1'b1;
+                if (rx_maj != exp_par) ev_par_err <= 1'b1;
               end
               RX_STOP: begin
-                if (!rx_sync) begin
-                  if (rx_shreg_q == 9'd0) ev_brk_det <= 1'b1;
-                  else                    ev_frm_err <= 1'b1;
+                if (!rx_maj) begin
+                  if (rx_shreg_q == 9'd0) begin
+                    ev_brk_det    <= 1'b1;
+                    rx_brk_hold_q <= 1'b1;   // report a break once, not once per frame time
+                  end else begin
+                    ev_frm_err <= 1'b1;
+                  end
                 end else if (rx_full) begin
                   ev_ovr_err <= 1'b1;
                 end else begin
@@ -344,11 +363,12 @@ module uart_usart_core
   // CSR Register Read/Write & Interrupt Aggregation
   // -------------------------------------------------------------------------
   wire [7:0] reg_off = csr_req_i.addr[7:0];
-  assign tx_push  = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h14) && !tx_full;
+  wire [31:0] baud_div_wr = ip_common_pkg::apply_wstrb({12'd0, baud_div_q}, csr_req_i.wdata, csr_req_i.wstrb);
+  assign tx_push  = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h14) && csr_req_i.wstrb[0] && !tx_full;
   assign tx_wdata = csr_req_i.wdata[8:0];
   assign rx_pop   = csr_req_i.valid && !csr_req_i.write && (reg_off == 8'h18) && !rx_empty;
-  assign tx_clr   = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h1C) && csr_req_i.wdata[0];
-  assign rx_clr   = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h1C) && csr_req_i.wdata[1];
+  assign tx_clr   = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h1C) && csr_req_i.wstrb[0] && csr_req_i.wdata[0];
+  assign rx_clr   = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h1C) && csr_req_i.wstrb[0] && csr_req_i.wdata[1];
 
   always_comb begin
     csr_rsp_o.ready = 1'b1;
@@ -360,6 +380,7 @@ module uart_usart_core
       8'h08: csr_rsp_o.rdata = {26'd0, cts_n_sync, tx_busy, rx_empty, rx_full, tx_empty, tx_full};
       8'h0C: csr_rsp_o.rdata = {26'd0, int_en_q};
       8'h10: csr_rsp_o.rdata = {26'd0, int_stat_q};
+      8'h14: csr_rsp_o.rdata = '0; // TX_DATA (WO)
       8'h18: csr_rsp_o.rdata = {23'd0, rx_rdata};
       8'h1C: csr_rsp_o.rdata = {8'd0, 8'(rx_lvl), 8'(tx_lvl), rts_thresh_q, 4'd0};
       default: csr_rsp_o.err = csr_req_i.valid;
@@ -374,24 +395,25 @@ module uart_usart_core
       int_stat_q   <= '0;
       rts_thresh_q <= 4'(FIFO_DEPTH - 4);
     end else begin
-      // Sticky status & level status updates
+      if (csr_req_i.valid && csr_req_i.write) begin
+        unique case (reg_off)
+          8'h00: ctrl_q       <= ip_common_pkg::apply_wstrb(ctrl_q, csr_req_i.wdata, csr_req_i.wstrb);
+          8'h04: baud_div_q   <= baud_div_wr[19:0];
+          8'h0C: if (csr_req_i.wstrb[0]) int_en_q <= csr_req_i.wdata[5:0];
+          8'h10: if (csr_req_i.wstrb[0]) int_stat_q <= int_stat_q & ~(csr_req_i.wdata[5:0] & 6'b111100);
+          8'h1C: if (csr_req_i.wstrb[0]) rts_thresh_q <= csr_req_i.wdata[7:4];
+          default: ;
+        endcase
+      end
+
+      // Sticky status & level status updates. Placed after the W1C write so that
+      // an event raised in the same cycle as a clear is never lost (set wins).
       int_stat_q[0] <= !rx_empty;
       int_stat_q[1] <= tx_empty;
       if (ev_par_err) int_stat_q[2] <= 1'b1;
       if (ev_frm_err) int_stat_q[3] <= 1'b1;
       if (ev_ovr_err) int_stat_q[4] <= 1'b1;
       if (ev_brk_det) int_stat_q[5] <= 1'b1;
-
-      if (csr_req_i.valid && csr_req_i.write) begin
-        unique case (reg_off)
-          8'h00: ctrl_q       <= ip_common_pkg::apply_wstrb(ctrl_q, csr_req_i.wdata, csr_req_i.wstrb);
-          8'h04: baud_div_q   <= csr_req_i.wdata[19:0];
-          8'h0C: int_en_q     <= csr_req_i.wdata[5:0];
-          8'h10: int_stat_q   <= int_stat_q & ~(csr_req_i.wdata[5:0] & 6'b111100);
-          8'h1C: rts_thresh_q <= csr_req_i.wdata[7:4];
-          default: ;
-        endcase
-      end
     end
   end
 

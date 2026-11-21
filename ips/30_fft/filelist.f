@@ -1,0 +1,10 @@
+ips/30_fft/rtl/fft_pkg.sv
+ips/30_fft/rtl/fft_sram_sp.sv
+ips/30_fft/rtl/fft_twiddle_rom.sv
+ips/30_fft/rtl/fft_butterfly.sv
+ips/30_fft/rtl/fft_core.sv
+ips/30_fft/rtl/fft_wb.sv
+ips/30_fft/rtl/fft_axi.sv
+ips/30_fft/rtl/fft_tl.sv
+ips/30_fft/rtl/fft_apb.sv
+ips/30_fft/rtl/fft_top.sv

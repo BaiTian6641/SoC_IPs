@@ -19,3 +19,6 @@ DVEfiles/
 *.swp
 .vscode/
 .idea/
+
+# Makefile build tree
+build/

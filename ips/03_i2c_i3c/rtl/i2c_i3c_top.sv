@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// i2c_i3c_top.sv - Parameterized Tri-Bus Wrapper (Wishbone B4 / AXI4 / TileLink) for i2c_i3c_core
+// i2c_i3c_top.sv - Parameterized Tri-Bus Wrapper (Wishbone B4 / AXI4 / TileLink / APB4) for i2c_i3c_core
 
 module i2c_i3c_top
   import bus_pkg::*;
@@ -16,6 +16,8 @@ module i2c_i3c_top
   output axi4_s2m_t axi_o,
   input  tl_m2s_t   tl_i,
   output tl_s2m_t   tl_o,
+  input  apb_m2s_t  apb_i,
+  output apb_s2m_t  apb_o,
 
   input  logic     scl_i,
   output logic     scl_o,
@@ -27,6 +29,8 @@ module i2c_i3c_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign apb_o = '0;
+    wire unused_bus = &{1'b0, apb_i};
     assign axi_o = '0;
     assign tl_o  = '0;
     i2c_i3c_wb u_imp (
@@ -43,6 +47,8 @@ module i2c_i3c_top
     .irq_o    (irq_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign apb_o = '0;
+    wire unused_bus = &{1'b0, apb_i};
     assign wb_o  = '0;
     assign axi_o = '0;
     i2c_i3c_tl u_imp (
@@ -58,7 +64,27 @@ module i2c_i3c_top
     .sda_oe_o (sda_oe_o),
     .irq_o    (irq_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign wb_o  = '0;
+    assign axi_o = '0;
+    assign tl_o  = '0;
+    wire unused_bus = &{1'b0, wb_i, axi_i, tl_i};
+    i2c_i3c_apb u_imp (
+      .clk_i  (clk_i),
+      .rst_ni (rst_ni),
+      .apb_i  (apb_i),
+      .apb_o  (apb_o),
+    .scl_i    (scl_i),
+    .scl_o    (scl_o),
+    .scl_oe_o (scl_oe_o),
+    .sda_i    (sda_i),
+    .sda_o    (sda_o),
+    .sda_oe_o (sda_oe_o),
+    .irq_o    (irq_o)
+    );
   end else begin : gen_axi
+    assign apb_o = '0;
+    wire unused_bus = &{1'b0, apb_i};
     assign wb_o = '0;
     assign tl_o = '0;
     i2c_i3c_axi u_imp (

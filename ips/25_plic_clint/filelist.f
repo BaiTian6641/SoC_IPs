@@ -1,0 +1,11 @@
+ips/25_plic_clint/rtl/irq_aggregator.sv
+ips/25_plic_clint/rtl/plic_gateway.sv
+ips/25_plic_clint/rtl/plic_target_select.sv
+ips/25_plic_clint/rtl/plic_core.sv
+ips/25_plic_clint/rtl/clint_core.sv
+ips/25_plic_clint/rtl/plic_clint_core.sv
+ips/25_plic_clint/rtl/plic_clint_wb.sv
+ips/25_plic_clint/rtl/plic_clint_axi.sv
+ips/25_plic_clint/rtl/plic_clint_tl.sv
+ips/25_plic_clint/rtl/plic_clint_apb.sv
+ips/25_plic_clint/rtl/plic_clint_top.sv

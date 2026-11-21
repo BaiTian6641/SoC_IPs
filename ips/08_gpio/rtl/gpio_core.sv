@@ -125,7 +125,31 @@ module gpio_core
       int_stat_q <= '0;
       dbnc_cfg_q <= '0;
     end else begin
-      // Update per-pin interrupts
+      if (csr_req_i.valid && csr_req_i.write) begin
+        logic [31:0] w, m;
+        w = csr_req_i.wdata;
+        m = {{8{csr_req_i.wstrb[3]}}, {8{csr_req_i.wstrb[2]}}, {8{csr_req_i.wstrb[1]}}, {8{csr_req_i.wstrb[0]}}};
+        unique case (reg_off)
+          8'h04: out_q      <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(out_q), w, csr_req_i.wstrb));
+          8'h08: dir_q      <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(dir_q), w, csr_req_i.wstrb));
+          8'h0C: out_q      <= out_q | NUM_PINS'(w & m);
+          8'h10: out_q      <= out_q & ~NUM_PINS'(w & m);
+          8'h14: out_q      <= out_q ^ NUM_PINS'(w & m);
+          8'h18: od_q       <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(od_q), w, csr_req_i.wstrb));
+          8'h1C: pull_en_q  <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(pull_en_q), w, csr_req_i.wstrb));
+          8'h20: pull_up_q  <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(pull_up_q), w, csr_req_i.wstrb));
+          8'h24: int_en_q   <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(int_en_q), w, csr_req_i.wstrb));
+          8'h28: int_type_q <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(int_type_q), w, csr_req_i.wstrb));
+          8'h2C: int_pol_q  <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(int_pol_q), w, csr_req_i.wstrb));
+          8'h30: int_both_q <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(int_both_q), w, csr_req_i.wstrb));
+          8'h34: int_stat_q <= int_stat_q & ~NUM_PINS'(w & m);
+          8'h38: dbnc_cfg_q <= 17'(ip_common_pkg::apply_wstrb(32'(dbnc_cfg_q), w, csr_req_i.wstrb));
+          default: ;
+        endcase
+      end
+
+      // Update per-pin interrupts. Applied AFTER the CSR write so that an event arriving in the
+      // same cycle as a W1C write is never lost (set wins over clear).
       for (int i = 0; i < NUM_PINS; i++) begin
         logic trig;
         if (int_type_q[i]) begin
@@ -135,28 +159,6 @@ module gpio_core
           trig = int_pol_q[i] ? clean_pin_q[i] : !clean_pin_q[i];
         end
         if (trig) int_stat_q[i] <= 1'b1;
-      end
-
-      if (csr_req_i.valid && csr_req_i.write) begin
-        logic [31:0] w;
-        w = csr_req_i.wdata;
-        unique case (reg_off)
-          8'h04: out_q      <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(out_q), w, csr_req_i.wstrb));
-          8'h08: dir_q      <= NUM_PINS'(ip_common_pkg::apply_wstrb(32'(dir_q), w, csr_req_i.wstrb));
-          8'h0C: out_q      <= out_q | NUM_PINS'(w);
-          8'h10: out_q      <= out_q & ~NUM_PINS'(w);
-          8'h14: out_q      <= out_q ^ NUM_PINS'(w);
-          8'h18: od_q       <= NUM_PINS'(w);
-          8'h1C: pull_en_q  <= NUM_PINS'(w);
-          8'h20: pull_up_q  <= NUM_PINS'(w);
-          8'h24: int_en_q   <= NUM_PINS'(w);
-          8'h28: int_type_q <= NUM_PINS'(w);
-          8'h2C: int_pol_q  <= NUM_PINS'(w);
-          8'h30: int_both_q <= NUM_PINS'(w);
-          8'h34: int_stat_q <= int_stat_q & ~NUM_PINS'(w);
-          8'h38: dbnc_cfg_q <= w[16:0];
-          default: ;
-        endcase
       end
     end
   end

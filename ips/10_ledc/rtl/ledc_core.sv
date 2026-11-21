@@ -126,7 +126,7 @@ module ledc_core
 
   assign px_pop = strip_en && !px_empty && (
       (px_state_q == PX_IDLE) ||
-      (px_state_q == PX_BIT_LOW && px_timer_q == 24'd0 && px_bit_rem_q == 6'd0)
+      (px_state_q == PX_BIT_LOW && px_timer_q <= 24'd1 && px_bit_rem_q == 6'd0)
   );
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
@@ -277,9 +277,6 @@ module ledc_core
       fade_done_ev  <= 1'b0;
     end else begin
       fade_done_ev  <= 1'b0;
-      int_stat_q[1] <= px_empty;
-      if (latch_done_ev) int_stat_q[0] <= 1'b1;
-      if (fade_done_ev)  int_stat_q[2] <= 1'b1;
 
       if (pwm_period_end) begin
         for (int c = 0; c < NUM_PWM_CH; c++) begin
@@ -328,6 +325,12 @@ module ledc_core
           endcase
         end
       end
+
+      // Hardware events are applied after the CSR write so that a W1C write can never swallow a
+      // simultaneous event (set wins over clear).
+      int_stat_q[1] <= px_empty;
+      if (latch_done_ev) int_stat_q[0] <= 1'b1;
+      if (fade_done_ev)  int_stat_q[2] <= 1'b1;
     end
   end
 

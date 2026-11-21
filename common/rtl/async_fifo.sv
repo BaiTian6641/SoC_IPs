@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // async_fifo.sv - Dual-Clock Gray-Coded Asynchronous CDC FIFO (Power-of-2 Depth)
 
+// Reset: wrst_ni / rrst_ni are independent asynchronous resets.  They MUST be asserted
+// together (or the FIFO flushed by asserting both) - resetting only one side leaves the
+// pointers inconsistent.  Each reset should be de-asserted synchronously in its own clock
+// domain (reset synchroniser outside this module).  wfull_o is 0 / rempty_o is 1 in reset.
 module async_fifo #(
   parameter int unsigned DATA_W = 32,
-  parameter int unsigned ADDR_W = 4    // Depth = 2**ADDR_W
+  parameter int unsigned ADDR_W = 4    // Depth = 2**ADDR_W, ADDR_W >= 1
 ) (
   // Write Domain
   input  logic              wclk_i,
@@ -21,6 +25,8 @@ module async_fifo #(
 );
 
   localparam int unsigned DEPTH = (1 << ADDR_W);
+
+  localparam logic [ADDR_W:0] GRAY_FULL_MASK = {2'b11, {(ADDR_W-1){1'b0}}};
 
   logic [DATA_W-1:0] mem [0:DEPTH-1];
 
@@ -44,14 +50,20 @@ module async_fifo #(
       rgray_wsync1_q <= '0;
       rgray_wsync2_q <= '0;
     end else begin
-      if (wpush_i && !wfull_o) begin
-        mem[wbin_q[ADDR_W-1:0]] <= wdata_i;
-      end
       wbin_q         <= wbin_d;
       wgray_q        <= wgray_d;
       rgray_wsync1_q <= rgray_q;
       rgray_wsync2_q <= rgray_wsync1_q;
-      wfull_o        <= (wgray_d == {~rgray_wsync2_q[ADDR_W:ADDR_W-1], rgray_wsync2_q[ADDR_W-2:0]});
+      // full when the next write gray pointer equals the read gray pointer with its two MSBs inverted
+      wfull_o        <= (wgray_d == (rgray_wsync2_q ^ GRAY_FULL_MASK));
+    end
+  end
+
+  // Memory write port: plain clocked process (no reset) so that FPGA block-RAM / ASIC SRAM
+  // macros can be inferred; the pointers are what is reset.
+  always_ff @(posedge wclk_i) begin
+    if (wpush_i && !wfull_o) begin
+      mem[wbin_q[ADDR_W-1:0]] <= wdata_i;
     end
   end
 

@@ -23,3 +23,9 @@ interconnect/crossbars/tl_xbar.sv
 interconnect/smart_switch/width_upsizer_downsizer.sv
 interconnect/smart_switch/width_upsizer_32to64.sv
 interconnect/smart_switch/smart_switch_interconnect.sv
+interconnect/adapters/axi4_burst_splitter.sv
+interconnect/adapters/axi4_id_remap.sv
+interconnect/bridges/axi4_to_axil.sv
+interconnect/bridges/axil_to_axi4.sv
+-f interconnect/apb/filelist.f
+-f interconnect/axis/filelist.f

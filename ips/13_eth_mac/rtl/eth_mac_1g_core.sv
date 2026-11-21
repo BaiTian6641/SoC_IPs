@@ -204,9 +204,61 @@ module eth_mac_1g_core
   assign phy_tx_en_o = tx_en_pin_q;
   assign phy_txd_o   = txd_pin_q;
 
-  // RX Capture Path (Samples loopback or external PHY)
-  wire       rx_dv_mux = loopback ? tx_en_pin_q : phy_rx_dv_i;
-  wire [7:0] rxd_mux   = loopback ? txd_pin_q   : phy_rxd_i;
+  // -------------------------------------------------------------------------
+  // RX clock-domain crossing. The PHY receive interface (phy_rx_clk_i domain) is captured by input
+  // flops in the RX clock domain, and every sample (dv/er/data, plus one trailing dv=0 sample that
+  // marks end-of-frame) is pushed through a Gray-coded async FIFO into clk_i. The reset is
+  // asynchronously asserted / synchronously released in the RX domain. Requirement: clk_i must not
+  // be slower than phy_rx_clk_i (the FIFO is drained at one sample per clk_i cycle).
+  // -------------------------------------------------------------------------
+  logic        rxrst_s1_q, rxrst_s2_q;
+  wire         rx_rst_n = rxrst_s2_q;
+  always_ff @(posedge phy_rx_clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      rxrst_s1_q <= 1'b0;
+      rxrst_s2_q <= 1'b0;
+    end else begin
+      rxrst_s1_q <= 1'b1;
+      rxrst_s2_q <= rxrst_s1_q;
+    end
+  end
+
+  logic        rxc_dv_q, rxc_dvp_q, rxc_er_q, rxc_drop_q;
+  logic [7:0]  rxc_d_q;
+  logic        rxf_full, rxf_empty;
+  logic [9:0]  rxf_rdata;
+  wire         rxf_push = rxc_dv_q || rxc_dvp_q;
+
+  always_ff @(posedge phy_rx_clk_i or negedge rx_rst_n) begin
+    if (!rx_rst_n) begin
+      rxc_dv_q   <= 1'b0;
+      rxc_dvp_q  <= 1'b0;
+      rxc_er_q   <= 1'b0;
+      rxc_d_q    <= '0;
+      rxc_drop_q <= 1'b0;
+    end else begin
+      rxc_dv_q  <= phy_rx_dv_i;
+      rxc_dvp_q <= rxc_dv_q;
+      rxc_er_q  <= phy_rx_er_i;
+      rxc_d_q   <= phy_rxd_i;
+      // FIFO overflow (clk_i too slow): remember it and flag the next sample as an error
+      if (rxf_push && rxf_full) rxc_drop_q <= 1'b1;
+      else if (rxf_push)        rxc_drop_q <= 1'b0;
+    end
+  end
+
+  async_fifo #(.DATA_W(10), .ADDR_W(4)) u_rx_cdc_fifo (
+    .wclk_i (phy_rx_clk_i), .wrst_ni(rx_rst_n),
+    .wpush_i(rxf_push), .wdata_i({rxc_er_q | rxc_drop_q, rxc_dv_q, rxc_d_q}), .wfull_o(rxf_full),
+    .rclk_i (clk_i), .rrst_ni(rst_ni),
+    .rpop_i (!rxf_empty), .rdata_o(rxf_rdata), .rempty_o(rxf_empty)
+  );
+
+  // RX sample stream in the clk_i domain (loopback taps the transmit pins directly)
+  wire       rx_smp_v  = loopback ? 1'b1        : !rxf_empty;
+  wire       rx_smp_dv = loopback ? tx_en_pin_q : rxf_rdata[8];
+  wire       rx_smp_er = loopback ? 1'b0        : rxf_rdata[9];
+  wire [7:0] rxd_mux   = loopback ? txd_pin_q   : rxf_rdata[7:0];
 
   typedef enum logic [1:0] {
     RX_WAIT_SFD,
@@ -214,46 +266,50 @@ module eth_mac_1g_core
   } rx_st_e;
 
   rx_st_e      rx_st_q;
-  logic        rx_nib_hi_q;
+  logic        rx_nib_hi_q, rx_prev5_q, rx_bad_q, rx_drop_q;
   logic [3:0]  rx_low_nib_q;
   logic [10:0] rx_byte_cnt_q, rx_latched_len_q;
   logic [47:0] rx_dst_mac_q;
   logic        rx_armed_q, rx_frame_valid_q, rx_crc_ok_q, rx_writeback_pend_q;
   logic        rx_done_ev, rx_crc_err_ev;
 
+  localparam int unsigned MAX_FRAME_BYTES = MAX_FRAME_WORDS * 4;
+  localparam logic [31:0] FCS_RESIDUE_OUT = 32'h2144_DF1C; // crc_o value after frame+FCS (see crc_engine)
+
   wire tx_trig = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h10) && csr_req_i.wdata[16] && (mstate_q == MAC_IDLE);
   wire rx_arm  = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h18) && csr_req_i.wdata[16];
 
   wire is_mii = (speed != 2'd2);
 
-  // RX byte assembly (combinational view of the incoming PHY data). The CRC engine is driven
-  // combinationally from this view so that its output includes the current byte in the NEXT cycle,
-  // i.e. the end-of-frame FCS check sees all bytes (including the last FCS byte).
-  logic       rx_byte_rdy;
-  logic [7:0] rx_full_byte;
-  always_comb begin
-    rx_byte_rdy  = 1'b0;
-    rx_full_byte = 8'd0;
-    if (rx_en && rx_dv_mux) begin
-      if (!is_mii) begin
-        rx_byte_rdy  = 1'b1;
-        rx_full_byte = rxd_mux;
-      end else if (rx_nib_hi_q) begin
-        rx_byte_rdy  = 1'b1;
-        rx_full_byte = {rxd_mux[3:0], rx_low_nib_q};
-      end
-    end
-  end
+  // RX DMA writeback owns rx_pkt_mem until it has finished: frames starting meanwhile are dropped
+  wire rx_dma_busy = rx_writeback_pend_q || (mstate_q == MAC_RX_DMA_REQ) || (mstate_q == MAC_RX_DMA_WAIT);
 
-  assign rx_crc_clr  = rx_byte_rdy && (rx_st_q == RX_WAIT_SFD) && (rx_full_byte == 8'hD5);
-  assign rx_crc_en   = rx_byte_rdy && (rx_st_q == RX_DATA_BYTES);
+  // RX byte assembly. In MII mode the SFD is recognised on nibble level (a 0xD nibble following a
+  // 0x5 nibble) so that a PHY delivering an odd number of preamble nibbles still aligns the data.
+  wire        rx_dv_s     = rx_en && rx_smp_v && rx_smp_dv;
+  wire        rx_sfd_hit  = rx_dv_s && (rx_st_q == RX_WAIT_SFD) &&
+                            (is_mii ? (rxd_mux[3:0] == 4'hD && rx_prev5_q) : (rxd_mux == 8'hD5));
+  wire        rx_byte_rdy = rx_dv_s && (rx_st_q == RX_DATA_BYTES) && (!is_mii || rx_nib_hi_q);
+  wire [7:0]  rx_full_byte = is_mii ? {rxd_mux[3:0], rx_low_nib_q} : rxd_mux;
+
+  assign rx_crc_clr  = rx_sfd_hit;
+  assign rx_crc_en   = rx_byte_rdy;
   assign rx_crc_byte = rx_full_byte;
 
-  // RX Byte Assembly & SFD/MAC/FCS Check
+  // packet buffer write (no reset, so it maps onto RAM)
+  wire rx_mem_we = rx_byte_rdy && !rx_drop_q && (rx_byte_cnt_q[10:2] < 9'(MAX_FRAME_WORDS));
+  always_ff @(posedge clk_i) begin
+    if (rx_mem_we) rx_pkt_mem[rx_byte_cnt_q[FW_W+1:2]][rx_byte_cnt_q[1:0]*8 +: 8] <= rx_full_byte;
+  end
+
+  // RX state machine / SFD / MAC filter / FCS check
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       rx_st_q             <= RX_WAIT_SFD;
       rx_nib_hi_q         <= 1'b0;
+      rx_prev5_q          <= 1'b0;
+      rx_bad_q            <= 1'b0;
+      rx_drop_q           <= 1'b0;
       rx_low_nib_q        <= '0;
       rx_byte_cnt_q       <= '0;
       rx_latched_len_q    <= '0;
@@ -275,67 +331,77 @@ module eth_mac_1g_core
       end
 
       if (!rx_en) begin
-        rx_st_q <= RX_WAIT_SFD;
-      end else if (rx_dv_mux) begin
-        if (is_mii) begin
-          if (!rx_nib_hi_q) begin
-            rx_low_nib_q <= rxd_mux[3:0];
-            rx_nib_hi_q  <= 1'b1;
-          end else begin
-            rx_nib_hi_q  <= 1'b0;
-          end
-        end
-
-        if (rx_byte_rdy) begin
-          if (rx_st_q == RX_WAIT_SFD) begin
-            if (rx_full_byte == 8'hD5) begin
-              rx_st_q       <= RX_DATA_BYTES;
-              rx_byte_cnt_q <= '0;
-            end
-          end else begin
-            int w_i, b_i;
-            w_i = int'(rx_byte_cnt_q[10:2]);
-            b_i = int'(rx_byte_cnt_q[1:0]);
-            if (w_i < MAX_FRAME_WORDS) begin
-              rx_pkt_mem[w_i][b_i*8 +: 8] <= rx_full_byte;
-            end
-            if (rx_byte_cnt_q < 11'd6) begin
-              rx_dst_mac_q <= {rx_dst_mac_q[39:0], rx_full_byte};
-            end
-            rx_byte_cnt_q <= rx_byte_cnt_q + 11'd1;
-          end
-        end
-      end else if (rx_st_q == RX_DATA_BYTES) begin
-        // End of Frame! Check IEEE 802.3 CRC32 residue (crc_o == 32'h2144_DF1C after FCS bytes!)
-        logic addr_ok, fcs_ok;
-        logic [47:0] our_mac;
-        our_mac = {mac_hi_q[7:0], mac_hi_q[15:8], mac_lo_q[7:0], mac_lo_q[15:8], mac_lo_q[23:16], mac_lo_q[31:24]};
-        addr_ok = promisc || (rx_dst_mac_q == 48'hFFFF_FFFF_FFFF) ||
-                  (rx_dst_mac_q == {mac_hi_q, mac_lo_q}) || (rx_dst_mac_q == our_mac);
-        fcs_ok  = (rx_crc_val == 32'h2144_DF1C);
-
         rx_st_q     <= RX_WAIT_SFD;
         rx_nib_hi_q <= 1'b0;
-        if (addr_ok && rx_byte_cnt_q >= 11'd4) begin
-          rx_latched_len_q <= append_crc ? (rx_byte_cnt_q - 11'd4) : rx_byte_cnt_q;
-          rx_crc_ok_q      <= fcs_ok;
-          rx_frame_valid_q <= 1'b1;
-          if (!fcs_ok) rx_crc_err_ev <= 1'b1;
-          if (rx_armed_q) begin
-            rx_armed_q          <= 1'b0;
-            rx_writeback_pend_q <= 1'b1;
+        rx_prev5_q  <= 1'b0;
+      end else if (rx_smp_v) begin
+        if (rx_smp_dv) begin
+          if (rx_st_q == RX_WAIT_SFD) begin
+            rx_prev5_q <= (rxd_mux[3:0] == 4'h5);
+            if (rx_sfd_hit) begin
+              rx_st_q       <= RX_DATA_BYTES;
+              rx_byte_cnt_q <= '0;
+              rx_nib_hi_q   <= 1'b0;
+              rx_bad_q      <= rx_smp_er;
+              rx_drop_q     <= rx_dma_busy;
+            end
+          end else begin
+            if (rx_smp_er) rx_bad_q <= 1'b1;
+            if (is_mii) begin
+              if (!rx_nib_hi_q) rx_low_nib_q <= rxd_mux[3:0];
+              rx_nib_hi_q <= !rx_nib_hi_q;
+            end
+            if (rx_byte_rdy) begin
+              if (rx_byte_cnt_q < 11'd6) rx_dst_mac_q <= {rx_dst_mac_q[39:0], rx_full_byte};
+              if (rx_byte_cnt_q != 11'h7FF) rx_byte_cnt_q <= rx_byte_cnt_q + 11'd1; // saturate
+            end
+          end
+        end else begin
+          rx_prev5_q  <= 1'b0;
+          rx_nib_hi_q <= 1'b0;
+          if (rx_st_q == RX_DATA_BYTES) begin
+            // End of frame: filter, length checks and IEEE 802.3 FCS verification
+            logic addr_ok, fcs_ok, runt, oversize;
+            addr_ok  = promisc || (rx_dst_mac_q == 48'hFFFF_FFFF_FFFF) || (rx_dst_mac_q == {mac_hi_q, mac_lo_q});
+            runt     = (rx_byte_cnt_q < 11'd64);                 // < 64 bytes incl. FCS (collision fragment)
+            oversize = (int'(rx_byte_cnt_q) > MAX_FRAME_BYTES);  // does not fit the packet buffer
+            // an odd number of MII nibbles (alignment error) or PHY rx_er also invalidate the FCS
+            fcs_ok   = (rx_crc_val == FCS_RESIDUE_OUT) && !rx_bad_q && !rx_nib_hi_q;
+
+            rx_st_q <= RX_WAIT_SFD;
+            if (!rx_drop_q && !runt && addr_ok) begin
+              if (oversize) begin
+                rx_crc_err_ev <= 1'b1;
+              end else begin
+                rx_latched_len_q <= append_crc ? (rx_byte_cnt_q - 11'd4) : rx_byte_cnt_q;
+                rx_crc_ok_q      <= fcs_ok;
+                rx_frame_valid_q <= 1'b1;
+                if (!fcs_ok) rx_crc_err_ev <= 1'b1;
+                if (rx_armed_q) begin
+                  rx_armed_q          <= 1'b0;
+                  rx_writeback_pend_q <= 1'b1;
+                end
+              end
+            end
           end
         end
-      end else begin
-        rx_nib_hi_q <= 1'b0;
       end
     end
   end
 
   // TX CRC engine is driven combinationally from the byte being launched onto the PHY pins, so
   // tx_crc_val already includes that byte in the following cycle (needed for seamless FCS append).
+  // Bytes beyond the programmed length (minimum-frame padding up to 60 bytes) are zero.
   logic [7:0] tx_cur_dbyte;
-  assign tx_cur_dbyte = tx_pkt_mem[tx_idx_q[FW_W+1:2]][tx_idx_q[1:0]*8 +: 8];
+  logic [10:0] tx_eff_len_q;  // frame length after padding (latched at TX start)
+  logic        tx_app_q;      // append-FCS setting latched at TX start
+  assign tx_cur_dbyte = (tx_idx_q < tx_len_q) ? tx_pkt_mem[tx_idx_q[FW_W+1:2]][tx_idx_q[1:0]*8 +: 8] : 8'h00;
+
+  // TX packet buffer write (no reset, so it maps onto RAM)
+  wire tx_mem_we = (mstate_q == MAC_TX_DMA_WAIT) && dma_rsp_i.resp_valid;
+  always_ff @(posedge clk_i) begin
+    if (tx_mem_we) tx_pkt_mem[dma_word_idx_q[FW_W-1:0]] <= dma_rsp_i.rdata;
+  end
   assign tx_crc_en    = (mstate_q == MAC_TX_PAYLOAD) && (!is_mii || !mii_hi_nib_q);
   assign tx_crc_byte  = tx_cur_dbyte;
 
@@ -358,6 +424,10 @@ module eth_mac_1g_core
       dma_req_o.addr  = rx_dma_adr_q + {21'd0, dma_word_idx_q, 2'b00};
       dma_req_o.wdata = rx_pkt_mem[dma_word_idx_q[FW_W-1:0]];
       dma_req_o.wstrb = 4'hF;
+      // last word of a frame whose length is not a multiple of 4: only write the valid bytes
+      if ((dma_word_idx_q + 9'd1 >= dma_words_tot_q) && (rx_latched_len_q[1:0] != 2'd0)) begin
+        dma_req_o.wstrb = ~(4'hF << rx_latched_len_q[1:0]);
+      end
     end
   end
 
@@ -365,6 +435,8 @@ module eth_mac_1g_core
     if (!rst_ni) begin
       mstate_q        <= MAC_IDLE;
       tx_len_q        <= '0;
+      tx_eff_len_q    <= '0;
+      tx_app_q        <= 1'b0;
       tx_idx_q        <= '0;
       dma_word_idx_q  <= '0;
       dma_words_tot_q <= '0;
@@ -388,10 +460,18 @@ module eth_mac_1g_core
           if (tx_en && tx_trig) begin
             logic [10:0] flen;
             flen            = csr_req_i.wdata[10:0];
-            tx_len_q        <= flen;
-            dma_word_idx_q  <= '0;
-            dma_words_tot_q <= 9'((flen + 11'd3) >> 2);
-            mstate_q        <= MAC_TX_DMA_REQ;
+            if (flen == 11'd0 || int'(flen) > MAX_FRAME_BYTES) begin
+              // zero-length / larger than the packet buffer: reject, complete immediately
+              tx_done_ev <= 1'b1;
+            end else begin
+              tx_len_q        <= flen;
+              tx_app_q        <= append_crc;
+              // IEEE 802.3: pad to the 60-byte minimum (+4 FCS = 64) when the MAC appends the FCS
+              tx_eff_len_q    <= (append_crc && flen < 11'd60) ? 11'd60 : flen;
+              dma_word_idx_q  <= '0;
+              dma_words_tot_q <= 9'((flen + 11'd3) >> 2);
+              mstate_q        <= MAC_TX_DMA_REQ;
+            end
           end else if (rx_writeback_pend_q) begin
             dma_word_idx_q  <= '0;
             dma_words_tot_q <= 9'((rx_latched_len_q + 11'd3) >> 2);
@@ -405,7 +485,6 @@ module eth_mac_1g_core
 
         MAC_TX_DMA_WAIT: begin
           if (dma_rsp_i.resp_valid) begin
-            tx_pkt_mem[dma_word_idx_q[FW_W-1:0]] <= dma_rsp_i.rdata;
             if (dma_word_idx_q + 9'd1 >= dma_words_tot_q) begin
               tx_idx_q     <= '0;
               mii_hi_nib_q <= 1'b0;
@@ -443,13 +522,13 @@ module eth_mac_1g_core
 
         MAC_TX_PAYLOAD: begin
           logic [7:0] dbyte;
-          dbyte = tx_pkt_mem[tx_idx_q[FW_W+1:2]][tx_idx_q[1:0]*8 +: 8];
+          dbyte = tx_cur_dbyte;
           tx_en_pin_q <= 1'b1;
           if (!is_mii) begin
             txd_pin_q   <= dbyte;
-            if (tx_idx_q + 11'd1 >= tx_len_q) begin
+            if (tx_idx_q + 11'd1 >= tx_eff_len_q) begin
               tx_idx_q <= '0;
-              mstate_q <= append_crc ? MAC_TX_FCS : MAC_TX_IFG;
+              mstate_q <= tx_app_q ? MAC_TX_FCS : MAC_TX_IFG;
             end else tx_idx_q <= tx_idx_q + 11'd1;
           end else begin
             txd_pin_q <= {4'd0, mii_hi_nib_q ? dbyte[7:4] : dbyte[3:0]};
@@ -457,9 +536,9 @@ module eth_mac_1g_core
               mii_hi_nib_q <= 1'b1;
             end else begin
               mii_hi_nib_q <= 1'b0;
-              if (tx_idx_q + 11'd1 >= tx_len_q) begin
+              if (tx_idx_q + 11'd1 >= tx_eff_len_q) begin
                 tx_idx_q <= '0;
-                mstate_q <= append_crc ? MAC_TX_FCS : MAC_TX_IFG;
+                mstate_q <= tx_app_q ? MAC_TX_FCS : MAC_TX_IFG;
               end else tx_idx_q <= tx_idx_q + 11'd1;
             end
           end
@@ -493,7 +572,7 @@ module eth_mac_1g_core
         MAC_TX_IFG: begin
           tx_en_pin_q <= 1'b0;
           txd_pin_q   <= '0;
-          if (tx_idx_q >= 11'd11) begin
+          if (tx_idx_q >= (is_mii ? 11'd24 : 11'd12)) begin  // 96 bit times: 12 bytes (GMII) / 24 nibbles (MII)
             tx_done_ev <= 1'b1;
             mstate_q   <= MAC_IDLE;
           end else tx_idx_q <= tx_idx_q + 11'd1;
@@ -530,7 +609,7 @@ module eth_mac_1g_core
       8'h04: csr_rsp_o.rdata = mac_lo_q;
       8'h08: csr_rsp_o.rdata = {16'd0, mac_hi_q};
       8'h0C: csr_rsp_o.rdata = tx_dma_adr_q;
-      8'h10: csr_rsp_o.rdata = {20'd0, (mstate_q != MAC_IDLE), tx_len_q};
+      8'h10: csr_rsp_o.rdata = {20'd0, (mstate_q != MAC_IDLE) || rx_writeback_pend_q, tx_len_q};
       8'h14: csr_rsp_o.rdata = rx_dma_adr_q;
       8'h18: csr_rsp_o.rdata = {18'd0, rx_crc_ok_q, rx_frame_valid_q, 1'b0, rx_latched_len_q};
       8'h1C: csr_rsp_o.rdata = {16'd0, mdio_busy_q, 15'd0};
@@ -551,10 +630,9 @@ module eth_mac_1g_core
       int_en_q     <= '0;
       int_stat_q   <= '0;
     end else begin
-      if (tx_done_ev)    int_stat_q[0] <= 1'b1;
-      if (rx_done_ev)    int_stat_q[1] <= 1'b1;
-      if (mdio_done_ev)  int_stat_q[2] <= 1'b1;
-      if (rx_crc_err_ev) int_stat_q[3] <= 1'b1;
+      // W1C and hardware events merged in one assignment so a coincident event is never lost
+      int_stat_q <= (int_stat_q & ~((csr_req_i.valid && csr_req_i.write && (reg_off == 8'h28)) ? csr_req_i.wdata[3:0] : 4'd0))
+                  | {rx_crc_err_ev, mdio_done_ev, rx_done_ev, tx_done_ev};
 
       if (csr_req_i.valid && csr_req_i.write) begin
         unique case (reg_off)
@@ -564,7 +642,6 @@ module eth_mac_1g_core
           8'h0C: tx_dma_adr_q <= csr_req_i.wdata;
           8'h14: rx_dma_adr_q <= csr_req_i.wdata;
           8'h24: int_en_q     <= csr_req_i.wdata[3:0];
-          8'h28: int_stat_q   <= int_stat_q & ~csr_req_i.wdata[3:0];
           default: ;
         endcase
       end

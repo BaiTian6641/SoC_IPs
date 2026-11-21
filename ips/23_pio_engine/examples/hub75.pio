@@ -1,0 +1,13 @@
+.program hub75
+.side_set 3    ; bit0 = CLK, bit1 = LAT, bit2 = OE_N
+; HUB75 8-pixel row shifter (out_count=6: {B1,G1,R1,B0,G0,R0}, out_right=1, autopull=1, pull_thresh=32).
+; Expects 2 words per 8-pixel row (4 pixels per 32-bit word, 8 bits/pixel, low 6 bits used).
+.wrap_target
+    loop 8              side 0b100  ; 8 pixels per row (keep OE_N=1)
+      out pins, 8       side 0b100  ; drive RGB, CLK=0, LAT=0, OE_N=1
+      nop               side 0b101  ; CLK=1 rising edge shifts pixel
+    endloop
+    nop                 side 0b110  ; LAT=1, CLK=0, OE_N=1 (latch row)
+    nop                 side 0b000 [7] ; LAT=0, OE_N=0 (display active for 8 ticks)
+    nop                 side 0b100  ; blank OE_N=1 before next row
+.wrap

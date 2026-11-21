@@ -1,0 +1,12 @@
+ips/24_timer_pwm/rtl/timer_pwm_pkg.sv
+ips/24_timer_pwm/rtl/tp_filter.sv
+ips/24_timer_pwm/rtl/tp_deadtime.sv
+ips/24_timer_pwm/rtl/tp_encoder.sv
+ips/24_timer_pwm/rtl/tp_channel.sv
+ips/24_timer_pwm/rtl/timer_pwm_core.sv
+ips/24_timer_pwm/rtl/timer_pwm_wb.sv
+ips/24_timer_pwm/rtl/timer_pwm_axi.sv
+ips/24_timer_pwm/rtl/timer_pwm_tl.sv
+ips/24_timer_pwm/rtl/timer_pwm_apb.sv
+ips/24_timer_pwm/rtl/timer_pwm_top.sv
+ips/24_timer_pwm/rtl/timer_group.sv

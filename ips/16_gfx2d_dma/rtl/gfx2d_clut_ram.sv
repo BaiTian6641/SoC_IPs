@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // gfx2d_clut_ram.sv - 256 x 32-bit ARGB8888 Color Look-Up Table (CLUT) Memory
-// Supports synchronous write (from CPU CSR aperture or DMA autoloader) and
-// zero-latency combinational dual readback (PFC pixel lookup + CPU read).
+// Inferable synchronous-write, dual combinational-read LUT RAM (PFC lookup + CPU aperture).
 
 module gfx2d_clut_ram (
   input  logic        clk_i,

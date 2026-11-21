@@ -56,6 +56,28 @@ module axi4_xbar
     );
   end
 
+  // Burst legality for a 32-bit data bus (AMBA AXI4 A3.4): reserved burst type, size > bus
+  // width, WRAP with len not in {1,3,7,15} or start address not aligned to size,
+  // FIXED with more than 16 beats -> SLVERR.  INCR crossing a 4KB boundary or unmapped
+  // address -> DECERR (matches repo convention and tb_crossbars_smart_switch).
+  function automatic logic burst_illegal_attr(
+    input logic [31:0] addr,
+    input logic [7:0]  len,
+    input logic [2:0]  size,
+    input logic [1:0]  burst
+  );
+    logic bad;
+    bad = 1'b0;
+    if (size > 3'd2)       bad = 1'b1;
+    if (burst == 2'b11)    bad = 1'b1;
+    if (burst == AXI_BURST_WRAP) begin
+      if (!(len == 8'd1 || len == 8'd3 || len == 8'd7 || len == 8'd15)) bad = 1'b1;
+      if ((addr & ((32'd1 << size) - 32'd1)) != 32'd0)                  bad = 1'b1;
+    end
+    if (burst == AXI_BURST_FIXED && len > 8'd15) bad = 1'b1;
+    return bad;
+  endfunction
+
   function automatic logic [S_IDX_W-1:0] decode_burst(
     input logic [31:0]                     addr,
     input logic [7:0]                      len,
@@ -63,7 +85,7 @@ module axi4_xbar
     input logic [1:0]                      burst,
     input addr_map_rule_t [NUM_SLAVES-1:0] map_rules
   );
-    if (axi_crosses_4kb(addr, len, size, burst)) begin
+    if (burst_illegal_attr(addr, len, size, burst) || axi_crosses_4kb(addr, len, size, burst)) begin
       return S_IDX_W'(ERR_SLAVE);
     end
     for (int s = 0; s < NUM_SLAVES; s++) begin
@@ -86,9 +108,10 @@ module axi4_xbar
   logic [NUM_MASTERS-1:0][3:0]         err_wid_q, err_rid_q;
   logic [NUM_MASTERS-1:0][7:0]         err_rlen_q;
   logic [NUM_MASTERS-1:0]              err_bvalid_q, err_rvalid_q;
+  logic [NUM_MASTERS-1:0]              err_wslverr_q, err_rslverr_q; // 1: illegal burst (SLVERR), 0: unmapped (DECERR)
 
-  // Slave write & read ownership (locked from AW->B and AR->RLAST)
-  logic [NUM_SLAVES-1:0]               s_wr_locked_q, s_rd_locked_q;
+  // Slave write & read ownership: rr_arbiter lock_i is driven combinationally by the
+  // grant itself (held from the first granted cycle until B / RLAST handshake).
 
   logic [NUM_SLAVES-1:0][NUM_MASTERS-1:0] s_wr_req, s_wr_gnt, s_rd_req, s_rd_gnt;
   logic [NUM_SLAVES-1:0][M_IDX_W-1:0]     s_wr_win, s_rd_win;
@@ -111,7 +134,7 @@ module axi4_xbar
       .rst_ni  (rst_ni),
       .req_i   (s_wr_req[s]),
       .qos_i   (m_aw_qos),
-      .lock_i  (s_wr_locked_q[s]),
+      .lock_i  (s_wr_vld[s] && !(s_s[s].bvalid && s_m[s].bready)),   // combinational: lock from the very first granted cycle (AR-05)
       .ack_i   (s_s[s].bvalid && s_m[s].bready),
       .gnt_o   (s_wr_gnt[s]),
       .idx_o   (s_wr_win[s]),
@@ -123,7 +146,7 @@ module axi4_xbar
       .rst_ni  (rst_ni),
       .req_i   (s_rd_req[s]),
       .qos_i   (m_ar_qos),
-      .lock_i  (s_rd_locked_q[s]),
+      .lock_i  (s_rd_vld[s] && !(s_s[s].rvalid && s_m[s].rready && s_s[s].rlast)),
       .ack_i   (s_s[s].rvalid && s_m[s].rready && s_s[s].rlast),
       .gnt_o   (s_rd_gnt[s]),
       .idx_o   (s_rd_win[s]),
@@ -174,7 +197,7 @@ module axi4_xbar
           m_m[m].wready  = !wr_w_done_q[m];
           m_m[m].bvalid  = err_bvalid_q[m];
           m_m[m].bid     = err_wid_q[m];
-          m_m[m].bresp   = AXI_RESP_DECERR;
+          m_m[m].bresp   = err_wslverr_q[m] ? AXI_RESP_SLVERR : AXI_RESP_DECERR;
         end else begin
           automatic int sw = int'(wr_tgt_q[m]);
           if (s_wr_gnt[sw][m]) begin
@@ -193,7 +216,7 @@ module axi4_xbar
           m_m[m].rvalid  = err_rvalid_q[m];
           m_m[m].rid     = err_rid_q[m];
           m_m[m].rdata   = 32'hBAD0_DEC0;
-          m_m[m].rresp   = AXI_RESP_DECERR;
+          m_m[m].rresp   = err_rslverr_q[m] ? AXI_RESP_SLVERR : AXI_RESP_DECERR;
           m_m[m].rlast   = (err_rlen_q[m] == 8'd0);
         end else begin
           automatic int sr = int'(rd_tgt_q[m]);
@@ -224,24 +247,9 @@ module axi4_xbar
       err_rlen_q    <= '0;
       err_bvalid_q  <= '0;
       err_rvalid_q  <= '0;
-      s_wr_locked_q <= '0;
-      s_rd_locked_q <= '0;
+      err_wslverr_q <= '0;
+      err_rslverr_q <= '0;
     end else begin
-      // Update slave lock state
-      for (int s = 0; s < NUM_SLAVES; s++) begin
-        if (s_wr_vld[s] && s_s[s].bvalid && s_m[s].bready) begin
-          s_wr_locked_q[s] <= 1'b0;
-        end else if (s_wr_vld[s] && !s_wr_locked_q[s]) begin
-          s_wr_locked_q[s] <= 1'b1;
-        end
-
-        if (s_rd_vld[s] && s_s[s].rvalid && s_m[s].rready && s_s[s].rlast) begin
-          s_rd_locked_q[s] <= 1'b0;
-        end else if (s_rd_vld[s] && !s_rd_locked_q[s]) begin
-          s_rd_locked_q[s] <= 1'b1;
-        end
-      end
-
       // Per-master write & read FSMs
       for (int m = 0; m < NUM_MASTERS; m++) begin
         if (!wr_busy_q[m]) begin
@@ -251,6 +259,7 @@ module axi4_xbar
             wr_aw_sent_q[m] <= 1'b0;
             wr_w_done_q[m]  <= 1'b0;
             err_wid_q[m]    <= m_s[m].awid;
+            err_wslverr_q[m] <= burst_illegal_attr(m_s[m].awaddr, m_s[m].awlen, m_s[m].awsize, m_s[m].awburst);
             err_bvalid_q[m] <= 1'b0;
           end
         end else begin
@@ -274,6 +283,7 @@ module axi4_xbar
             rd_tgt_q[m]     <= decode_burst(m_s[m].araddr, m_s[m].arlen, m_s[m].arsize, m_s[m].arburst, addr_map_i);
             rd_ar_sent_q[m] <= 1'b0;
             err_rid_q[m]    <= m_s[m].arid;
+            err_rslverr_q[m] <= burst_illegal_attr(m_s[m].araddr, m_s[m].arlen, m_s[m].arsize, m_s[m].arburst);
             err_rlen_q[m]   <= m_s[m].arlen;
             err_rvalid_q[m] <= 1'b0;
           end

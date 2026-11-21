@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// spi_top.sv - Parameterized Tri-Bus Wrapper (Wishbone B4 / AXI4 / TileLink) for spi_core
+// spi_top.sv - Parameterized Tri-Bus Wrapper (Wishbone B4 / AXI4 / TileLink / APB4) for spi_core
 
 module spi_top
   import bus_pkg::*;
@@ -18,6 +18,8 @@ module spi_top
   output axi4_s2m_t axi_o,
   input  tl_m2s_t   tl_i,
   output tl_s2m_t   tl_o,
+  input  apb_m2s_t  apb_i,
+  output apb_s2m_t  apb_o,
 
   output logic              spi_sck_o,
   input  logic              spi_sck_i,
@@ -34,6 +36,8 @@ module spi_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign apb_o = '0;
+    wire unused_bus = &{1'b0, apb_i};
     assign axi_o = '0;
     assign tl_o  = '0;
     spi_wb #(
@@ -58,6 +62,8 @@ module spi_top
     .dma_rx_req_o (dma_rx_req_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign apb_o = '0;
+    wire unused_bus = &{1'b0, apb_i};
     assign wb_o  = '0;
     assign axi_o = '0;
     spi_tl #(
@@ -81,7 +87,35 @@ module spi_top
     .dma_tx_req_o (dma_tx_req_o),
     .dma_rx_req_o (dma_rx_req_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign wb_o  = '0;
+    assign axi_o = '0;
+    assign tl_o  = '0;
+    wire unused_bus = &{1'b0, wb_i, axi_i, tl_i};
+    spi_apb #(
+    .FIFO_DEPTH (FIFO_DEPTH),
+    .NUM_CS     (NUM_CS)
+  ) u_imp (
+      .clk_i  (clk_i),
+      .rst_ni (rst_ni),
+      .apb_i  (apb_i),
+      .apb_o  (apb_o),
+    .spi_sck_o    (spi_sck_o),
+    .spi_sck_i    (spi_sck_i),
+    .spi_sck_oe_o (spi_sck_oe_o),
+    .spi_cs_no    (spi_cs_no),
+    .spi_cs_ni    (spi_cs_ni),
+    .spi_mosi_o   (spi_mosi_o),
+    .spi_mosi_i   (spi_mosi_i),
+    .spi_miso_o   (spi_miso_o),
+    .spi_miso_i   (spi_miso_i),
+    .irq_o        (irq_o),
+    .dma_tx_req_o (dma_tx_req_o),
+    .dma_rx_req_o (dma_rx_req_o)
+    );
   end else begin : gen_axi
+    assign apb_o = '0;
+    wire unused_bus = &{1'b0, apb_i};
     assign wb_o = '0;
     assign tl_o = '0;
     spi_axi #(

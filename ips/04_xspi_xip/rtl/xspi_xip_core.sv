@@ -17,6 +17,12 @@
 //   0x14 IND_WDATA : [31:0] Indirect write data word
 //   0x18 IND_RDATA : [31:0] Indirect captured read data word (RO)
 //   0x1C STATUS    : [0]=busy, [1]=ind_done(W1C), [15:8]=xip_hit_cnt(RO)
+//
+// Audit notes (ips-b): word data are little-endian (first flash byte -> bits [7:0]); IND_CMD writes are queued
+// (one deep) and executed in order; CS# high >= max(4, 2*sck_half_div) clocks; a flash left in continuous-read
+// mode is reset (32 bits of ones on the address lanes) before any instruction phase; CTRL[15] is write-only;
+// erase/program/any non-read indirect command, XIP_CFG writes and CTRL format changes flush the XIP cache.
+// Known limitation: CTRL[2] ddr_en and xspi_dqs_i are not implemented (SDR only).
 
 module xspi_xip_core
   import bus_pkg::*;
@@ -91,6 +97,18 @@ module xspi_xip_core
   logic [7:0]  io_out_q, io_oe_q;
   logic        xip_resp_ready_q;
   logic [31:0] xip_resp_data_q;
+  // Audit fixes: queued indirect command, CS# high-time counter, continuous-read exit phase, fill invalidation
+  logic        ind_pend_q;
+  logic [11:0] ind_cmd_q;
+  logic [8:0]  csh_cnt_q;
+  logic        exit_ph_q;
+  logic        fill_inval_q;
+
+  // SPI flash streams bytes in ascending-address order, first byte first. The CSR/bus side is little-endian:
+  // byte at the lowest address lives in bits [7:0]. The shifter works MSB-first, so swap at the word boundary.
+  function automatic logic [31:0] bswap32(input logic [31:0] w);
+    return {w[7:0], w[15:8], w[23:16], w[31:24]};
+  endfunction
 
   function automatic logic [3:0] lane_width(input logic [1:0] lcfg);
     unique case (lcfg)
@@ -134,8 +152,18 @@ module xspi_xip_core
   assign xspi_io_oe_o = io_oe_q;
 
   wire [7:0] reg_off  = csr_req_i.addr[7:0];
-  wire       ind_trig = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h0C) && (state_q == ST_IDLE);
   wire [7:0] eff_div  = (clk_div_q == 8'd0) ? 8'd1 : clk_div_q;
+  // IND_CMD write: queued (never dropped while the FSM is busy); rejected with an error when disabled
+  wire       ind_wr    = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h0C);
+  wire       ind_queue = ind_wr && enable && !ind_pend_q;
+  // CTRL write (cache_flush bit 15 is write-only and never stored)
+  wire [31:0] ctrl_nxt  = ip_common_pkg::apply_wstrb(ctrl_q, csr_req_i.wdata, csr_req_i.wstrb) & ~(32'd1 << 15);
+  wire        ctrl_wr   = csr_req_i.valid && csr_req_i.write && (reg_off == 8'h00);
+  // any CTRL write that changes the read format, any XIP_CFG write or an explicit flush invalidates the cache
+  wire        flush_now = (ctrl_wr && ((csr_req_i.wstrb[1] && csr_req_i.wdata[15]) || (ctrl_nxt[16:2] != ctrl_q[16:2]))) ||
+                          (csr_req_i.valid && csr_req_i.write && (reg_off == 8'h08));
+  // minimum CS# high time between transactions: one full SCK period, at least 4 clocks
+  wire [8:0] csh_load = ({1'b0, eff_div} << 1) < 9'd4 ? 9'd3 : (({1'b0, eff_div} << 1) - 9'd1);
 
   // Helper task-like logic inside main FSM
   logic [1:0] active_lanes;
@@ -183,8 +211,14 @@ module xspi_xip_core
       io_oe_q          <= '0;
       xip_resp_ready_q <= 1'b0;
       xip_resp_data_q  <= '0;
+      ind_pend_q       <= 1'b0;
+      ind_cmd_q        <= '0;
+      csh_cnt_q        <= '0;
+      exit_ph_q        <= 1'b0;
+      fill_inval_q     <= 1'b0;
     end else begin
       xip_resp_ready_q <= 1'b0;
+      if (csh_cnt_q != 9'd0) csh_cnt_q <= csh_cnt_q - 9'd1;
 
       // Count each XIP cache hit once per transaction (the request may stay valid for several cycles);
       // the cycle that completes a cache-fill (miss) response is not a hit
@@ -198,13 +232,7 @@ module xspi_xip_core
       // CSR Register Writes
       if (csr_req_i.valid && csr_req_i.write) begin
         unique case (reg_off)
-          8'h00: begin
-            ctrl_q <= ip_common_pkg::apply_wstrb(ctrl_q, csr_req_i.wdata, csr_req_i.wstrb);
-            if (csr_req_i.wdata[15]) begin
-              cache_valid_q <= '0;
-              cont_active_q <= 1'b0;
-            end
-          end
+          8'h00: ctrl_q      <= ctrl_nxt;
           8'h04: clk_div_q   <= csr_req_i.wdata[7:0];
           8'h08: xip_cfg_q   <= csr_req_i.wdata[15:0];
           8'h10: ind_addr_q  <= csr_req_i.wdata;
@@ -214,14 +242,64 @@ module xspi_xip_core
         endcase
       end
 
+      if (flush_now) begin
+        cache_valid_q <= '0;
+        if (state_q != ST_IDLE) fill_inval_q <= 1'b1;   // an in-flight fill must not repopulate the cache
+      end
+      if (ind_queue) begin
+        ind_pend_q <= 1'b1;
+        ind_cmd_q  <= csr_req_i.wdata[11:0];
+      end
+
       unique case (state_q)
         ST_IDLE: begin
           sck_q   <= 1'b0;
           cs_n_q  <= 1'b1;
           io_oe_q <= '0;
-          if (enable && xip_en && mem_win_req_i.valid && !mem_win_req_i.write && !xip_cache_hit && !xip_resp_ready_q) begin
+          if (enable && csh_cnt_q == 9'd0 && cont_active_q &&
+              (ind_pend_q || (xip_en && mem_win_req_i.valid && !mem_win_req_i.write && !xip_cache_hit &&
+                              !xip_resp_ready_q && !cont_read_en))) begin
+            // Flash is still in continuous-read (M7:0) mode: an instruction byte would be taken as an address.
+            // Clock all-ones on the address lanes for addr+mode (32 bits) to reset it, then restart normally.
+            exit_ph_q       <= 1'b1;
+            is_xip_req_q    <= 1'b0;
+            req_has_addr_q  <= 1'b0;
+            req_is_wr_q     <= 1'b0;
+            req_has_data_q  <= 1'b0;
+            req_has_dummy_q <= 1'b0;
+            req_has_mode_q  <= 1'b0;
+            cs_n_q          <= 1'b0;
+            div_cnt_q       <= eff_div - 8'd1;
+            shift_data_q    <= '1;
+            bits_rem_q      <= 6'd32;
+            io_oe_q         <= lane_oe_mask(addr_lanes_cfg);
+            io_out_q        <= pack_out_lanes('1, addr_lanes_cfg);
+            state_q         <= ST_ADDR;
+          end else if (enable && csh_cnt_q == 9'd0 && ind_pend_q) begin
+            // Queued indirect command (never dropped while busy)
+            ind_pend_q      <= 1'b0;
+            is_xip_req_q    <= 1'b0;
+            cur_opcode_q    <= ind_cmd_q[7:0];
+            req_has_addr_q  <= ind_cmd_q[8];
+            req_is_wr_q     <= ind_cmd_q[9];
+            req_has_data_q  <= ind_cmd_q[10];
+            req_has_dummy_q <= ind_cmd_q[11];
+            req_has_mode_q  <= 1'b0;
+            cur_addr_q      <= ind_addr_q;
+            shift_data_q    <= {ind_cmd_q[7:0], 24'd0};
+            bits_rem_q      <= 6'd8;
+            cs_n_q          <= 1'b0;
+            div_cnt_q       <= eff_div - 8'd1;
+            io_oe_q         <= lane_oe_mask(cmd_lanes_cfg);
+            io_out_q        <= pack_out_lanes({ind_cmd_q[7:0], 24'd0}, cmd_lanes_cfg);
+            state_q         <= ST_CMD;
+            // anything but a pure read (erase, write-enable, program, ...) may change flash contents
+            if (!(ind_cmd_q[10] && !ind_cmd_q[9])) cache_valid_q <= '0;
+          end else if (enable && csh_cnt_q == 9'd0 && xip_en && mem_win_req_i.valid && !mem_win_req_i.write &&
+                       !xip_cache_hit && !xip_resp_ready_q) begin
             // Start XIP Cache-Fill Read Transaction
             is_xip_req_q    <= 1'b1;
+            fill_inval_q    <= 1'b0;
             cur_opcode_q    <= xip_cfg_q[7:0];
             cur_mode_q      <= xip_cfg_q[15:8];
             cur_addr_q      <= {mem_win_req_i.addr[31:2], 2'b00};
@@ -246,24 +324,6 @@ module xspi_xip_core
               io_out_q     <= pack_out_lanes({xip_cfg_q[7:0], 24'd0}, cmd_lanes_cfg);
               state_q      <= ST_CMD;
             end
-          end else if (enable && ind_trig) begin
-            is_xip_req_q    <= 1'b0;
-            cont_active_q   <= 1'b0;
-            cur_opcode_q    <= csr_req_i.wdata[7:0];
-            req_has_addr_q  <= csr_req_i.wdata[8];
-            req_is_wr_q     <= csr_req_i.wdata[9];
-            req_has_data_q  <= csr_req_i.wdata[10];
-            req_has_dummy_q <= csr_req_i.wdata[11];
-            req_has_mode_q  <= 1'b0;
-            cur_addr_q      <= ind_addr_q;
-            shift_data_q    <= {csr_req_i.wdata[7:0], 24'd0};
-            bits_rem_q      <= 6'd8;
-            cs_n_q          <= 1'b0;
-            div_cnt_q       <= eff_div - 8'd1;
-            io_oe_q         <= lane_oe_mask(cmd_lanes_cfg);
-            io_out_q        <= pack_out_lanes({csr_req_i.wdata[7:0], 24'd0}, cmd_lanes_cfg);
-            state_q         <= ST_CMD;
-            if (csr_req_i.wdata[9]) cache_valid_q <= '0; // Invalidate XIP cache on flash write/erase
           end
         end
 
@@ -285,9 +345,9 @@ module xspi_xip_core
                 if (bits_rem_q <= 6'd1) begin
                   if (req_has_data_q) begin
                     bits_rem_q   <= 6'd32;
-                    shift_data_q <= req_is_wr_q ? ind_wdata_q : '0;
+                    shift_data_q <= req_is_wr_q ? bswap32(ind_wdata_q) : '0;
                     io_oe_q      <= req_is_wr_q ? lane_oe_mask(data_lanes_cfg) : 8'h00;
-                    io_out_q     <= pack_out_lanes(ind_wdata_q, data_lanes_cfg);
+                    io_out_q     <= pack_out_lanes(bswap32(ind_wdata_q), data_lanes_cfg);
                     state_q      <= ST_DATA;
                   end else begin
                     state_q <= ST_DONE;
@@ -312,10 +372,10 @@ module xspi_xip_core
                       io_oe_q    <= 8'h00;
                       state_q    <= ST_DUMMY;
                     end else if (req_has_data_q) begin
-                      shift_data_q <= req_is_wr_q ? ind_wdata_q : '0;
+                      shift_data_q <= req_is_wr_q ? bswap32(ind_wdata_q) : '0;
                       bits_rem_q   <= 6'd32;
                       io_oe_q      <= req_is_wr_q ? lane_oe_mask(data_lanes_cfg) : 8'h00;
-                      io_out_q     <= pack_out_lanes(ind_wdata_q, data_lanes_cfg);
+                      io_out_q     <= pack_out_lanes(bswap32(ind_wdata_q), data_lanes_cfg);
                       state_q      <= ST_DATA;
                     end else begin
                       state_q <= ST_DONE;
@@ -335,10 +395,10 @@ module xspi_xip_core
                       io_oe_q    <= 8'h00;
                       state_q    <= ST_DUMMY;
                     end else if (req_has_data_q) begin
-                      shift_data_q <= req_is_wr_q ? ind_wdata_q : '0;
+                      shift_data_q <= req_is_wr_q ? bswap32(ind_wdata_q) : '0;
                       bits_rem_q   <= 6'd32;
                       io_oe_q      <= req_is_wr_q ? lane_oe_mask(data_lanes_cfg) : 8'h00;
-                      io_out_q     <= pack_out_lanes(ind_wdata_q, data_lanes_cfg);
+                      io_out_q     <= pack_out_lanes(bswap32(ind_wdata_q), data_lanes_cfg);
                       state_q      <= ST_DATA;
                     end else begin
                       state_q <= ST_DONE;
@@ -378,17 +438,24 @@ module xspi_xip_core
         end
 
         ST_DONE: begin
-          cs_n_q  <= 1'b1;
-          io_oe_q <= 8'h00;
-          if (is_xip_req_q) begin
-            // Byte-swap big-endian SPI flash stream or deliver word directly & populate XIP cache
-            cache_valid_q[xip_idx] <= 1'b1;
-            cache_tag_q[xip_idx]   <= xip_tag;
-            cache_data_q[xip_idx]  <= shift_data_q;
-            xip_resp_data_q        <= shift_data_q;
-            xip_resp_ready_q       <= 1'b1;
+          cs_n_q    <= 1'b1;
+          io_oe_q   <= 8'h00;
+          csh_cnt_q <= csh_load;
+          if (exit_ph_q) begin
+            // continuous-read mode reset finished; the queued request restarts with a full instruction
+            exit_ph_q     <= 1'b0;
+            cont_active_q <= 1'b0;
+          end else if (is_xip_req_q) begin
+            // The shifter is MSB-first (first flash byte in [31:24]); the bus word is little-endian
+            if (!fill_inval_q && !flush_now) begin
+              cache_valid_q[xip_idx] <= 1'b1;
+              cache_tag_q[xip_idx]   <= xip_tag;
+              cache_data_q[xip_idx]  <= bswap32(shift_data_q);
+            end
+            xip_resp_data_q  <= bswap32(shift_data_q);
+            xip_resp_ready_q <= 1'b1;
           end else begin
-            if (!req_is_wr_q) ind_rdata_q <= shift_data_q;
+            if (!req_is_wr_q) ind_rdata_q <= bswap32(shift_data_q);
             ind_done_q <= 1'b1;
           end
           state_q <= ST_IDLE;
@@ -403,7 +470,7 @@ module xspi_xip_core
   always_comb begin
     mem_win_rsp_o = '0;
     if (mem_win_req_i.valid) begin
-      if (mem_win_req_i.write || !xip_en) begin
+      if (mem_win_req_i.write || !xip_en || !enable) begin
         mem_win_rsp_o.ready = 1'b1;
         mem_win_rsp_o.err   = 1'b1;
       end else if (xip_cache_hit && state_q == ST_IDLE) begin
@@ -425,11 +492,14 @@ module xspi_xip_core
       8'h00: csr_rsp_o.rdata = ctrl_q;
       8'h04: csr_rsp_o.rdata = {24'd0, clk_div_q};
       8'h08: csr_rsp_o.rdata = {16'd0, xip_cfg_q};
-      8'h0C: csr_rsp_o.rdata = '0;
+      8'h0C: begin
+        csr_rsp_o.rdata = '0;
+        csr_rsp_o.err   = csr_req_i.valid && csr_req_i.write && !enable;   // trigger rejected while disabled
+      end
       8'h10: csr_rsp_o.rdata = ind_addr_q;
       8'h14: csr_rsp_o.rdata = ind_wdata_q;
       8'h18: csr_rsp_o.rdata = ind_rdata_q;
-      8'h1C: csr_rsp_o.rdata = {16'd0, hit_cnt_q, 6'd0, ind_done_q, (state_q != ST_IDLE)};
+      8'h1C: csr_rsp_o.rdata = {16'd0, hit_cnt_q, 6'd0, ind_done_q, (state_q != ST_IDLE) || ind_pend_q};
       default: csr_rsp_o.err = csr_req_i.valid;
     endcase
   end

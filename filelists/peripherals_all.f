@@ -1,95 +1,34 @@
+# Aggregate RTL filelist: interconnect + every IP fragment (ips/NN_name/filelist.f).
+# Maintained by the integrator. Add new IPs here (packages inside each fragment come first).
 -f filelists/interconnect.f
-ips/01_uart_usart/rtl/uart_usart_core.sv
-ips/01_uart_usart/rtl/uart_usart_wb.sv
-ips/01_uart_usart/rtl/uart_usart_axi.sv
-ips/01_uart_usart/rtl/uart_usart_tl.sv
-ips/01_uart_usart/rtl/uart_usart_top.sv
-ips/02_spi/rtl/spi_core.sv
-ips/02_spi/rtl/spi_wb.sv
-ips/02_spi/rtl/spi_axi.sv
-ips/02_spi/rtl/spi_tl.sv
-ips/02_spi/rtl/spi_top.sv
-ips/03_i2c_i3c/rtl/i2c_i3c_core.sv
-ips/03_i2c_i3c/rtl/i2c_i3c_wb.sv
-ips/03_i2c_i3c/rtl/i2c_i3c_axi.sv
-ips/03_i2c_i3c/rtl/i2c_i3c_tl.sv
-ips/03_i2c_i3c/rtl/i2c_i3c_top.sv
-ips/04_xspi_xip/rtl/xspi_xip_core.sv
-ips/04_xspi_xip/rtl/xspi_xip_wb.sv
-ips/04_xspi_xip/rtl/xspi_xip_axi.sv
-ips/04_xspi_xip/rtl/xspi_xip_tl.sv
-ips/04_xspi_xip/rtl/xspi_xip_top.sv
-ips/05_hyperram/rtl/hyperram_ctrl_core.sv
-ips/05_hyperram/rtl/hyperram_ctrl_wb.sv
-ips/05_hyperram/rtl/hyperram_ctrl_axi.sv
-ips/05_hyperram/rtl/hyperram_ctrl_tl.sv
-ips/05_hyperram/rtl/hyperram_ctrl_top.sv
-ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_core.sv
-ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_wb.sv
-ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_axi.sv
-ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_tl.sv
-ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_top.sv
-ips/07_nvpsram/rtl/nvpsram_ctrl_core.sv
-ips/07_nvpsram/rtl/nvpsram_ctrl_wb.sv
-ips/07_nvpsram/rtl/nvpsram_ctrl_axi.sv
-ips/07_nvpsram/rtl/nvpsram_ctrl_tl.sv
-ips/07_nvpsram/rtl/nvpsram_ctrl_top.sv
-ips/08_gpio/rtl/gpio_core.sv
-ips/08_gpio/rtl/gpio_wb.sv
-ips/08_gpio/rtl/gpio_axi.sv
-ips/08_gpio/rtl/gpio_tl.sv
-ips/08_gpio/rtl/gpio_top.sv
-ips/09_i2s/rtl/i2s_core.sv
-ips/09_i2s/rtl/i2s_wb.sv
-ips/09_i2s/rtl/i2s_axi.sv
-ips/09_i2s/rtl/i2s_tl.sv
-ips/09_i2s/rtl/i2s_top.sv
-ips/10_ledc/rtl/ledc_core.sv
-ips/10_ledc/rtl/ledc_wb.sv
-ips/10_ledc/rtl/ledc_axi.sv
-ips/10_ledc/rtl/ledc_tl.sv
-ips/10_ledc/rtl/ledc_top.sv
-ips/11_jtag/rtl/jtag_tap_master_core.sv
-ips/11_jtag/rtl/jtag_wb.sv
-ips/11_jtag/rtl/jtag_axi.sv
-ips/11_jtag/rtl/jtag_tl.sv
-ips/11_jtag/rtl/jtag_top.sv
-ips/12_can/rtl/can_fd_core.sv
-ips/12_can/rtl/can_wb.sv
-ips/12_can/rtl/can_axi.sv
-ips/12_can/rtl/can_tl.sv
-ips/12_can/rtl/can_top.sv
-ips/13_eth_mac/rtl/eth_mac_1g_core.sv
-ips/13_eth_mac/rtl/eth_mac_wb.sv
-ips/13_eth_mac/rtl/eth_mac_axi.sv
-ips/13_eth_mac/rtl/eth_mac_tl.sv
-ips/13_eth_mac/rtl/eth_mac_top.sv
-ips/14_dvi_tmds/rtl/tmds_encoder.sv
-ips/14_dvi_tmds/rtl/dvi_tmds_core.sv
-ips/14_dvi_tmds/rtl/dvi_tmds_wb.sv
-ips/14_dvi_tmds/rtl/dvi_tmds_axi.sv
-ips/14_dvi_tmds/rtl/dvi_tmds_tl.sv
-ips/14_dvi_tmds/rtl/dvi_tmds_top.sv
-ips/15_dma_gdma/rtl/gdma_core.sv
-ips/15_dma_gdma/rtl/gdma_wb.sv
-ips/15_dma_gdma/rtl/gdma_axi.sv
-ips/15_dma_gdma/rtl/gdma_tl.sv
-ips/15_dma_gdma/rtl/gdma_top.sv
-ips/16_gfx2d_dma/rtl/gfx2d_pkg.sv
-ips/16_gfx2d_dma/rtl/gfx2d_clut_ram.sv
-ips/16_gfx2d_dma/rtl/gfx2d_pfc.sv
-ips/16_gfx2d_dma/rtl/gfx2d_blender.sv
-ips/16_gfx2d_dma/rtl/gfx2d_dma_core.sv
-ips/16_gfx2d_dma/rtl/gfx2d_dma_wb.sv
-ips/16_gfx2d_dma/rtl/gfx2d_dma_axi.sv
-ips/16_gfx2d_dma/rtl/gfx2d_dma_tl.sv
-ips/16_gfx2d_dma/rtl/gfx2d_dma_top.sv
-ips/17_mini_tpu/rtl/mini_tpu_pkg.sv
-ips/17_mini_tpu/rtl/mini_tpu_fp_conv.sv
-ips/17_mini_tpu/rtl/mini_tpu_mac_array.sv
-ips/17_mini_tpu/rtl/mini_tpu_sfu.sv
-ips/17_mini_tpu/rtl/mini_tpu_core.sv
-ips/17_mini_tpu/rtl/mini_tpu_wb.sv
-ips/17_mini_tpu/rtl/mini_tpu_axi.sv
-ips/17_mini_tpu/rtl/mini_tpu_tl.sv
-ips/17_mini_tpu/rtl/mini_tpu_top.sv
+-f ips/01_uart_usart/filelist.f
+-f ips/02_spi/filelist.f
+-f ips/03_i2c_i3c/filelist.f
+-f ips/04_xspi_xip/filelist.f
+-f ips/05_hyperram/filelist.f
+-f ips/06_sdram_sram_nvsram/filelist.f
+-f ips/07_nvpsram/filelist.f
+-f ips/08_gpio/filelist.f
+-f ips/09_i2s/filelist.f
+-f ips/10_ledc/filelist.f
+-f ips/11_jtag/filelist.f
+-f ips/12_can/filelist.f
+-f ips/13_eth_mac/filelist.f
+-f ips/14_dvi_tmds/filelist.f
+-f ips/15_dma_gdma/filelist.f
+-f ips/16_gfx2d_dma/filelist.f
+-f ips/17_mini_tpu/filelist.f
+-f ips/18_rmt/filelist.f
+-f ips/19_ir_txrx/filelist.f
+-f ips/20_hub75/filelist.f
+-f ips/21_par_if/filelist.f
+-f ips/22_flex_ext_bus/filelist.f
+-f ips/23_pio_engine/filelist.f
+-f ips/24_timer_pwm/filelist.f
+-f ips/25_plic_clint/filelist.f
+-f ips/26_wdt_rtc/filelist.f
+-f ips/27_sdmmc/filelist.f
+-f ips/28_crypto/filelist.f
+-f ips/29_cordic/filelist.f
+-f ips/30_fft/filelist.f
+-f ips/31_dsp_filter/filelist.f

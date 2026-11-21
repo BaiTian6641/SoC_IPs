@@ -134,7 +134,7 @@ module mem_to_axi4_master
         end
 
         ST_WR_AW_W: begin
-          logic aw_ok, w_ok;
+          automatic logic aw_ok, w_ok;
           aw_ok = aw_done_q || axi_i.awready;
           w_ok  = w_done_q  || axi_i.wready;
           aw_done_q <= aw_ok;

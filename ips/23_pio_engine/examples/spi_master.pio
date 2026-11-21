@@ -1,0 +1,9 @@
+.program spi_master
+.side_set 1
+; SPI Mode 0 (CPOL=0, CPHA=0) master, 8 ticks per SCLK period (4 low, 4 high).
+; out_right=0, in_right=0, autopull=1 (thresh 8), autopush=1 (thresh 8).
+; side 0 = SCLK low, out_base = MOSI, in_base = MISO.
+.wrap_target
+    out pins, 1         side 0 [3]  ; drive MOSI, SCLK=0 (4 ticks)
+    in  pins, 1         side 1 [3]  ; drive SCLK=1, sample MISO (4 ticks)
+.wrap

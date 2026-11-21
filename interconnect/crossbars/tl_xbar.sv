@@ -78,14 +78,20 @@ module tl_xbar
   logic [NUM_HOSTS-1:0]            free_slot_vld;
   logic [NUM_HOSTS-1:0][3:0]       free_slot_idx;
 
-  // Multi-beat Channel A burst state
+  // Multi-beat Channel A burst state + stalled-slot stability (audit AR-10c)
   logic [NUM_HOSTS-1:0]            host_a_burst_active_q;
   logic [NUM_HOSTS-1:0][3:0]       host_a_burst_slot_q;
   logic [NUM_HOSTS-1:0][D_IDX_W-1:0] host_a_burst_dev_q;
   logic [NUM_DEVICES-1:0][7:0]     dev_a_beats_rem_q;
+  logic [NUM_DEVICES-1:0]          dev_a_stalled_q;
+  logic [NUM_DEVICES-1:0][3:0]     dev_a_stall_slot_q;
 
-  // Multi-beat Channel D burst state
+  // Multi-beat Channel D burst state + error-responder non-preemption lock (audit AR-10d)
   logic [NUM_HOSTS-1:0][7:0]       host_d_beats_rem_q;
+  logic [NUM_HOSTS-1:0][D_IDX_W-1:0] host_d_dev_q;
+  logic [NUM_HOSTS-1:0]            host_d_dev_locked_q;
+  logic [NUM_HOSTS-1:0]            host_d_lock_c;
+  logic [NUM_HOSTS-1:0]            use_err_d;
 
   // Per-host decode error D-channel state (handles multi-beat Get denial too)
   logic [NUM_HOSTS-1:0]            err_d_valid_q;
@@ -94,6 +100,8 @@ module tl_xbar
   logic [NUM_HOSTS-1:0][7:0]       err_d_source_q;
   logic [NUM_HOSTS-1:0][7:0]       err_d_beats_rem_q;
   logic [NUM_HOSTS-1:0][7:0]       err_a_sink_rem_q; // Eats multi-beat Put payload on error
+
+  assign use_err_d = err_d_valid_q & ~host_d_dev_locked_q;
 
   always_comb begin
     for (int h = 0; h < NUM_HOSTS; h++) begin
@@ -142,13 +150,18 @@ module tl_xbar
 
   for (genvar d = 0; d < NUM_DEVICES; d++) begin : gen_dev_a_arb
     for (genvar h = 0; h < NUM_HOSTS; h++) begin : gen_a_req
-      assign dev_a_req[d][h] = a_sel_dev[h][d];
+      // A host in the middle of a multi-beat message keeps requesting its device even
+      // while a_valid is low (bubble), so the arbiter can never hand the device to
+      // another host and interleave two messages (audit AR-09).
+      assign dev_a_req[d][h] = a_sel_dev[h][d] ||
+                               (host_a_burst_active_q[h] && (host_a_burst_dev_q[h] == D_IDX_W'(d)));
     end
 
     wire a_hs_d = d_m[d].a_valid && d_s[d].a_ready;
     wire [7:0] a_beats_cur = tl_a_msg_beats(d_m[d].a_opcode, d_m[d].a_size);
+    // Lock multi-beat messages AND stalled single-beat requests (audit AR-10b / vkit #76 Bug #2)
     wire lock_a = (dev_a_beats_rem_q[d] > 8'd1) ||
-                  ((dev_a_beats_rem_q[d] == 8'd0) && dev_a_vld[d] && d_m[d].a_valid && (a_beats_cur > 8'd1)) ||
+                  ((dev_a_beats_rem_q[d] == 8'd0) && dev_a_vld[d] && d_m[d].a_valid && ((a_beats_cur > 8'd1) || !a_hs_d)) ||
                   ((dev_a_beats_rem_q[d] == 8'd1) && !a_hs_d);
 
     rr_arbiter #(.N(NUM_HOSTS)) u_a_arb (
@@ -173,14 +186,18 @@ module tl_xbar
 
   for (genvar h = 0; h < NUM_HOSTS; h++) begin : gen_host_d_arb
     for (genvar d = 0; d < NUM_DEVICES; d++) begin : gen_d_req
-      assign host_d_req[h][d] = d_s[d].d_valid && (d_s[d].d_source[7:4] == 4'(h));
+      // Same for channel D: a device in the middle of a multi-beat response stays selected
+      // across d_valid bubbles (audit AR-09).
+      assign host_d_req[h][d] = (d_s[d].d_valid && (d_s[d].d_source[7:4] == 4'(h))) ||
+                                ((host_d_beats_rem_q[h] != 8'd0) && (host_d_dev_q[h] == D_IDX_W'(d)));
     end
 
-    wire d_hs_h = !err_d_valid_q[h] && h_m[h].d_valid && h_s[h].d_ready;
+    wire d_hs_h = !use_err_d[h] && h_m[h].d_valid && h_s[h].d_ready;
     wire [7:0] d_beats_cur = tl_d_msg_beats(h_m[h].d_opcode, h_m[h].d_size);
     wire lock_d = (host_d_beats_rem_q[h] > 8'd1) ||
-                  ((host_d_beats_rem_q[h] == 8'd0) && !err_d_valid_q[h] && host_d_vld[h] && h_m[h].d_valid && (d_beats_cur > 8'd1)) ||
+                  ((host_d_beats_rem_q[h] == 8'd0) && !use_err_d[h] && host_d_vld[h] && h_m[h].d_valid && ((d_beats_cur > 8'd1) || !d_hs_h)) ||
                   ((host_d_beats_rem_q[h] == 8'd1) && !d_hs_h);
+    assign host_d_lock_c[h] = lock_d;
 
     rr_arbiter #(.N(NUM_DEVICES)) u_d_arb (
       .clk_i   (clk_i),
@@ -203,14 +220,14 @@ module tl_xbar
         automatic int hw = int'(dev_a_win[d]);
         automatic logic [3:0] active_slot = host_a_burst_active_q[hw]
                                             ? host_a_burst_slot_q[hw]
-                                            : free_slot_idx[hw];
+                                            : (dev_a_stalled_q[d] ? dev_a_stall_slot_q[d] : free_slot_idx[hw]);
         d_m[d]          = h_s[hw];
         d_m[d].a_source = {4'(hw), active_slot};
       end
       // d_ready comes from whichever host owns d_source[7:4]
       if (d_s[d].d_valid) begin
         automatic int target_h = int'(d_s[d].d_source[7:4]);
-        if (target_h < NUM_HOSTS && host_d_gnt[target_h][d] && !err_d_valid_q[target_h]) begin
+        if (target_h < NUM_HOSTS && host_d_gnt[target_h][d] && !use_err_d[target_h]) begin
           d_m[d].d_ready = h_s[target_h].d_ready;
         end
       end
@@ -229,8 +246,8 @@ module tl_xbar
         end
       end
 
-      // Channel D response
-      if (err_d_valid_q[h]) begin
+      // Channel D response (never preempts a locked/stalled real-device response)
+      if (use_err_d[h]) begin
         h_m[h].d_valid   = 1'b1;
         h_m[h].d_opcode  = err_d_opcode_q[h];
         h_m[h].d_size    = err_d_size_q[h];
@@ -241,7 +258,11 @@ module tl_xbar
       end else if (host_d_vld[h]) begin
         automatic int dw = int'(host_d_win[h]);
         automatic logic [3:0] rslot = d_s[dw].d_source[3:0];
+        // channel A readiness belongs to the *request* path (granted device), never to the
+        // device that happens to be returning a response (audit AR-10)
+        automatic logic       a_rdy_keep = h_m[h].a_ready;
         h_m[h]          = d_s[dw];
+        h_m[h].a_ready  = a_rdy_keep;
         h_m[h].d_source = slot_orig_src_q[h][rslot];
       end
     end
@@ -255,7 +276,11 @@ module tl_xbar
       host_a_burst_slot_q   <= '0;
       host_a_burst_dev_q    <= '0;
       dev_a_beats_rem_q     <= '0;
+      dev_a_stalled_q       <= '0;
+      dev_a_stall_slot_q    <= '0;
       host_d_beats_rem_q    <= '0;
+      host_d_dev_q          <= '0;
+      host_d_dev_locked_q   <= '0;
       err_d_valid_q         <= '0;
       err_d_opcode_q        <= '0;
       err_d_size_q          <= '0;
@@ -263,13 +288,14 @@ module tl_xbar
       err_d_beats_rem_q     <= '0;
       err_a_sink_rem_q      <= '0;
     end else begin
-      // Track Channel A acceptance, source remap slot allocation & multi-beat bursts
+      // Track Channel A acceptance, stalled-slot freeze, remap slot allocation & multi-beat bursts
       for (int d = 0; d < NUM_DEVICES; d++) begin
         if (d_m[d].a_valid && d_s[d].a_ready) begin
           automatic int hw = int'(dev_a_win[d]);
+          dev_a_stalled_q[d] <= 1'b0;
           if (dev_a_beats_rem_q[d] == 8'd0) begin
             automatic logic [7:0] nb = tl_a_msg_beats(d_m[d].a_opcode, d_m[d].a_size);
-            automatic logic [3:0] sl = free_slot_idx[hw];
+            automatic logic [3:0] sl = dev_a_stalled_q[d] ? dev_a_stall_slot_q[d] : free_slot_idx[hw];
             slot_busy_q[hw][sl]     <= 1'b1;
             slot_orig_src_q[hw][sl] <= h_s[hw].a_source;
             if (nb > 8'd1) begin
@@ -284,21 +310,19 @@ module tl_xbar
               host_a_burst_active_q[hw] <= 1'b0;
             end
           end
+        end else if (d_m[d].a_valid && !d_s[d].a_ready && !dev_a_stalled_q[d] && (dev_a_beats_rem_q[d] == 8'd0)) begin
+          automatic int hw = int'(dev_a_win[d]);
+          dev_a_stalled_q[d]    <= 1'b1;
+          dev_a_stall_slot_q[d] <= free_slot_idx[hw];
         end
       end
 
-      // Track Channel D completion, slot release & decode-error D generation
+      // Track Channel D completion, slot release & decode-error D generation (independent A-err & D paths, AR-10d)
       for (int h = 0; h < NUM_HOSTS; h++) begin
-        if (err_d_valid_q[h]) begin
-          if (h_s[h].d_ready) begin
-            if (err_d_beats_rem_q[h] <= 8'd1) begin
-              err_d_valid_q[h]     <= 1'b0;
-              err_d_beats_rem_q[h] <= 8'd0;
-            end else begin
-              err_d_beats_rem_q[h] <= err_d_beats_rem_q[h] - 8'd1;
-            end
-          end
-        end else if (h_s[h].a_valid && a_dec_err[h] && h_m[h].a_ready) begin
+        host_d_dev_locked_q[h] <= host_d_lock_c[h];
+
+        // Channel A decode-error ingestion (independent of simultaneous real-device D completion)
+        if (!err_d_valid_q[h] && h_s[h].a_valid && a_dec_err[h] && h_m[h].a_ready) begin
           if (err_a_sink_rem_q[h] != 8'd0) begin
             if (err_a_sink_rem_q[h] == 8'd1) begin
               err_a_sink_rem_q[h] <= 8'd0;
@@ -308,10 +332,12 @@ module tl_xbar
             end
           end else begin
             automatic logic [7:0] ab = tl_a_msg_beats(h_s[h].a_opcode, h_s[h].a_size);
-            automatic logic [2:0] dop = (h_s[h].a_opcode == TL_OP_GET ||
-                                         h_s[h].a_opcode == TL_OP_ARITHMETIC_DATA ||
-                                         h_s[h].a_opcode == TL_OP_LOGICAL_DATA)
-                                        ? TL_OP_ACCESS_ACK_DATA : TL_OP_ACCESS_ACK;
+            automatic logic [2:0] dop = (h_s[h].a_opcode == TL_OP_INTENT)
+                                        ? TL_OP_HINT_ACK
+                                        : ((h_s[h].a_opcode == TL_OP_GET ||
+                                            h_s[h].a_opcode == TL_OP_ARITHMETIC_DATA ||
+                                            h_s[h].a_opcode == TL_OP_LOGICAL_DATA)
+                                           ? TL_OP_ACCESS_ACK_DATA : TL_OP_ACCESS_ACK);
             err_d_opcode_q[h]    <= dop;
             err_d_size_q[h]      <= h_s[h].a_size;
             err_d_source_q[h]    <= h_s[h].a_source;
@@ -322,6 +348,18 @@ module tl_xbar
               err_d_valid_q[h] <= 1'b1;
             end
           end
+        end
+
+        // Channel D consumption
+        if (use_err_d[h]) begin
+          if (h_s[h].d_ready) begin
+            if (err_d_beats_rem_q[h] <= 8'd1) begin
+              err_d_valid_q[h]     <= 1'b0;
+              err_d_beats_rem_q[h] <= 8'd0;
+            end else begin
+              err_d_beats_rem_q[h] <= err_d_beats_rem_q[h] - 8'd1;
+            end
+          end
         end else if (host_d_vld[h] && h_m[h].d_valid && h_s[h].d_ready) begin
           automatic int dw = int'(host_d_win[h]);
           automatic logic [3:0] rslot = d_s[dw].d_source[3:0];
@@ -329,6 +367,7 @@ module tl_xbar
             automatic logic [7:0] db = tl_d_msg_beats(h_m[h].d_opcode, h_m[h].d_size);
             if (db > 8'd1) begin
               host_d_beats_rem_q[h] <= db - 8'd1;
+              host_d_dev_q[h]       <= host_d_win[h];
             end else begin
               slot_busy_q[h][rslot] <= 1'b0;
             end

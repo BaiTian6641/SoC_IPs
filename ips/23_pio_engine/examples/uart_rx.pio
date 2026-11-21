@@ -1,0 +1,16 @@
+.program uart_rx
+; 8N1 UART receiver, 8 SM ticks per bit, LSB first (in_right=1).
+; in_base = RX pin, jmp_pin = RX pin.
+.wrap_target
+start:
+    wait 0 pin 0                    ; detect start bit falling edge (tick 0)
+    nop                 [10]        ; wait until middle of data bit 0 (tick 12)
+    loop 8
+      in pins, 1        [7]         ; sample 8 bits, 8 ticks apart
+    endloop
+    jmp pin, good_stop              ; check stop bit at middle (tick 76)
+    wait 1 pin 0                    ; framing error: wait for line idle
+    jmp start
+good_stop:
+    push noblock                    ; byte lands in RXF[31:24]
+.wrap

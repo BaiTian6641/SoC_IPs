@@ -1,0 +1,12 @@
+.program uart_tx
+.side_set 1 opt
+; 8N1 UART transmitter, 8 SM ticks per bit, LSB first (out_right=1).
+; Init via SM_INSTR: set pindirs, 1 ; set pins, 1
+.wrap_target
+    pull block                      ; wait for TX byte (pin stays 1)
+    set  pins, 0        [6]         ; start bit (0): 7 ticks + 1 tick of loop = 8 ticks
+    loop 8
+      out pins, 1       [7]         ; 8 data bits, 8 ticks each
+    endloop
+    set  pins, 1        [6]         ; stop bit (1): 7 ticks + 1 tick of next pull = 8 ticks
+.wrap

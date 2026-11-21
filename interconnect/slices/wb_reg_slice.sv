@@ -42,8 +42,13 @@ module wb_reg_slice
     assign fwd_in = '{we: s_wb_i.we, adr: s_wb_i.adr, dat: s_wb_i.dat,
                       sel: s_wb_i.sel, cti: s_wb_i.cti, bte: s_wb_i.bte};
 
-    assign up_valid = s_wb_i.cyc && s_wb_i.stb && !classic_inflight_q;
-    assign dn_ready = !m_wb_i.stall;
+    wire inflight_full = (dn_inflight_q >= 6'd62);
+    assign up_valid = s_wb_i.cyc && s_wb_i.stb && !classic_inflight_q && !inflight_full;
+    // Classic WB (CTI == 000) must hold STB asserted until ACK/ERR/RTY rather than popping on !stall
+    // (audit AR-17 / vkit #76 Bug #1).
+    assign dn_ready = (fwd_out.cti == WB_CTI_CLASSIC)
+                      ? (m_wb_i.ack || m_wb_i.err || m_wb_i.rty)
+                      : !m_wb_i.stall;
 
     skid_buffer #(.T(wb_fwd_pay_t)) u_fwd_skid (
       .clk_i     (clk_i),
@@ -71,7 +76,7 @@ module wb_reg_slice
 
     always_comb begin
       s_wb_o       = rsp_q;
-      s_wb_o.stall = !up_ready || classic_inflight_q;
+      s_wb_o.stall = !up_ready || classic_inflight_q || inflight_full;
     end
 
     always_ff @(posedge clk_i or negedge rst_ni) begin

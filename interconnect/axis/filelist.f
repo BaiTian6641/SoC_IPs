@@ -1,0 +1,9 @@
++incdir+common/include
+interconnect/axis/axis_register.sv
+interconnect/axis/axis_fifo.sv
+interconnect/axis/axis_async_fifo.sv
+interconnect/axis/axis_width_converter.sv
+interconnect/axis/axis_arb_mux.sv
+interconnect/axis/axis_demux.sv
+interconnect/axis/axi4_to_axis.sv
+interconnect/axis/axis_to_axi4.sv

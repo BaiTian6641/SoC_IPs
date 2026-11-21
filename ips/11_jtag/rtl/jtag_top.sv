@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// jtag_top.sv - Parameterized Tri-Bus Wrapper (WB / AXI4 / TileLink) for jtag_tap_master_core
+// jtag_top.sv - Parameterized Quad-Bus Wrapper (WB / AXI4 / TileLink / APB4) for jtag_tap_master_core
 
 module jtag_top
   import bus_pkg::*;
@@ -17,6 +17,8 @@ module jtag_top
   output axi4_s2m_t s_axi_o,
   input  tl_m2s_t   s_tl_i,
   output tl_s2m_t   s_tl_o,
+  input  apb_m2s_t  s_apb_i,
+  output apb_s2m_t  s_apb_o,
 
   // Selectable System Bus Master Ports
   output wb_m2s_t   m_wb_o,
@@ -40,6 +42,7 @@ module jtag_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign s_apb_o = '0;
     assign s_axi_o = '0; assign m_axi_o = '0;
     assign s_tl_o  = '0; assign m_tl_o  = '0;
     jtag_wb #(
@@ -62,6 +65,7 @@ module jtag_top
     .irq_o             (irq_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign s_apb_o = '0;
     assign s_wb_o  = '0; assign m_wb_o  = '0;
     assign s_axi_o = '0; assign m_axi_o = '0;
     jtag_tl #(
@@ -83,7 +87,31 @@ module jtag_top
     .jtag_slv_trst_ni  (jtag_slv_trst_ni),
     .irq_o             (irq_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign s_wb_o = '0; assign m_wb_o = '0;
+    assign s_axi_o = '0;
+    assign s_tl_o = '0; assign m_tl_o = '0;
+    jtag_apb #(
+    .IDCODE_VAL (IDCODE_VAL)
+  ) u_imp (
+      .clk_i(clk_i), .rst_ni(rst_ni),
+      .s_apb_i(s_apb_i), .s_apb_o(s_apb_o),
+      .m_axi_o(m_axi_o), .m_axi_i(m_axi_i),
+    .jtag_mst_tck_o    (jtag_mst_tck_o),
+    .jtag_mst_tms_o    (jtag_mst_tms_o),
+    .jtag_mst_tdi_o    (jtag_mst_tdi_o),
+    .jtag_mst_tdo_i    (jtag_mst_tdo_i),
+    .jtag_mst_trst_no  (jtag_mst_trst_no),
+    .jtag_slv_tck_i    (jtag_slv_tck_i),
+    .jtag_slv_tms_i    (jtag_slv_tms_i),
+    .jtag_slv_tdi_i    (jtag_slv_tdi_i),
+    .jtag_slv_tdo_o    (jtag_slv_tdo_o),
+    .jtag_slv_tdo_oe_o (jtag_slv_tdo_oe_o),
+    .jtag_slv_trst_ni  (jtag_slv_trst_ni),
+    .irq_o             (irq_o)
+  );
   end else begin : gen_axi
+    assign s_apb_o = '0;
     assign s_wb_o = '0; assign m_wb_o = '0;
     assign s_tl_o = '0; assign m_tl_o = '0;
     jtag_axi #(

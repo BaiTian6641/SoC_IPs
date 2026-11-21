@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// i2s_top.sv - Parameterized Tri-Bus Wrapper (Wishbone B4 / AXI4 / TileLink) for i2s_core
+// i2s_top.sv - Parameterized Quad-Bus Wrapper (Wishbone B4 / AXI4 / TileLink / APB4) for i2s_core
 
 module i2s_top
   import bus_pkg::*;
@@ -17,6 +17,8 @@ module i2s_top
   output axi4_s2m_t axi_o,
   input  tl_m2s_t   tl_i,
   output tl_s2m_t   tl_o,
+  input  apb_m2s_t  apb_i,
+  output apb_s2m_t  apb_o,
 
   output logic     i2s_mclk_o,
   output logic     i2s_bclk_o,
@@ -33,6 +35,7 @@ module i2s_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign apb_o = '0;
     assign axi_o = '0;
     assign tl_o  = '0;
     i2s_wb #(
@@ -56,6 +59,7 @@ module i2s_top
     .dma_rx_req_o  (dma_rx_req_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign apb_o = '0;
     assign wb_o  = '0;
     assign axi_o = '0;
     i2s_tl #(
@@ -78,7 +82,32 @@ module i2s_top
     .dma_tx_req_o  (dma_tx_req_o),
     .dma_rx_req_o  (dma_rx_req_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign wb_o = '0;
+    assign axi_o = '0;
+    assign tl_o = '0;
+    i2s_apb #(
+    .FIFO_DEPTH (FIFO_DEPTH)
+  ) u_imp (
+      .clk_i  (clk_i),
+      .rst_ni (rst_ni),
+      .apb_i  (apb_i),
+      .apb_o  (apb_o),
+    .i2s_mclk_o    (i2s_mclk_o),
+    .i2s_bclk_o    (i2s_bclk_o),
+    .i2s_bclk_i    (i2s_bclk_i),
+    .i2s_bclk_oe_o (i2s_bclk_oe_o),
+    .i2s_ws_o      (i2s_ws_o),
+    .i2s_ws_i      (i2s_ws_i),
+    .i2s_ws_oe_o   (i2s_ws_oe_o),
+    .i2s_sd_o      (i2s_sd_o),
+    .i2s_sd_i      (i2s_sd_i),
+    .irq_o         (irq_o),
+    .dma_tx_req_o  (dma_tx_req_o),
+    .dma_rx_req_o  (dma_rx_req_o)
+    );
   end else begin : gen_axi
+    assign apb_o = '0;
     assign wb_o = '0;
     assign tl_o = '0;
     i2s_axi #(

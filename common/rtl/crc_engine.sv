@@ -56,7 +56,7 @@ module crc_engine #(
   assign crc_raw_o = lfsr_q;
 
   always_comb begin
-    logic [CRC_W-1:0] tmp;
+    automatic logic [CRC_W-1:0] tmp;
     if (REF_OUT) begin
       for (int i = 0; i < CRC_W; i++) begin
         tmp[i] = lfsr_q[CRC_W - 1 - i];

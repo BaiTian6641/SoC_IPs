@@ -1,0 +1,18 @@
+.program i2s_tx
+.side_set 2
+; Philips I2S 16-bit stereo transmitter (LRCLK advances 1 BCLK before MSB).
+; side bit 0 = BCLK, side bit 1 = LRCLK.
+; out_right=0, autopull=1 (pull_thresh=32): OSR = {Left[15:0], Right[15:0]}.
+; Every BCLK half-cycle is exactly 1 tick (64 ticks per 32-bit stereo frame).
+.wrap_target
+    loop 15             side 0b01   ; BCLK=1 (Right bit 0 / entry), LRCLK=0
+      out pins, 1       side 0b00   ; Left bits 15..1, BCLK=0, LRCLK=0
+      nop               side 0b01   ; BCLK=1, LRCLK=0
+    endloop
+    out pins, 1         side 0b10   ; Left bit 0, BCLK=0, LRCLK->1 (1 BCLK ahead of Right MSB)
+    loop 15             side 0b11   ; BCLK=1 (Left bit 0), LRCLK=1
+      out pins, 1       side 0b10   ; Right bits 15..1, BCLK=0, LRCLK=1
+      nop               side 0b11   ; BCLK=1, LRCLK=1
+    endloop
+    out pins, 1         side 0b00   ; Right bit 0, BCLK=0, LRCLK->0 (1 BCLK ahead of Left MSB)
+.wrap

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// eth_mac_top.sv - Parameterized Tri-Bus Wrapper (WB / AXI4 / TileLink) for eth_mac_1g_core
+// eth_mac_top.sv - Parameterized Quad-Bus Wrapper (WB / AXI4 / TileLink / APB4) for eth_mac_1g_core
 
 module eth_mac_top
   import bus_pkg::*;
@@ -17,6 +17,8 @@ module eth_mac_top
   output axi4_s2m_t s_axi_o,
   input  tl_m2s_t   s_tl_i,
   output tl_s2m_t   s_tl_o,
+  input  apb_m2s_t  s_apb_i,
+  output apb_s2m_t  s_apb_o,
 
   // Selectable System Bus Master Ports
   output wb_m2s_t   m_wb_o,
@@ -41,6 +43,7 @@ module eth_mac_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign s_apb_o = '0;
     assign s_axi_o = '0; assign m_axi_o = '0;
     assign s_tl_o  = '0; assign m_tl_o  = '0;
     eth_mac_wb #(
@@ -64,6 +67,7 @@ module eth_mac_top
     .irq_o         (irq_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign s_apb_o = '0;
     assign s_wb_o  = '0; assign m_wb_o  = '0;
     assign s_axi_o = '0; assign m_axi_o = '0;
     eth_mac_tl #(
@@ -86,7 +90,32 @@ module eth_mac_top
     .mdio_oe_o     (mdio_oe_o),
     .irq_o         (irq_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign s_wb_o = '0; assign m_wb_o = '0;
+    assign s_axi_o = '0;
+    assign s_tl_o = '0; assign m_tl_o = '0;
+    eth_mac_apb #(
+    .MAX_FRAME_WORDS (MAX_FRAME_WORDS)
+  ) u_imp (
+      .clk_i(clk_i), .rst_ni(rst_ni),
+      .s_apb_i(s_apb_i), .s_apb_o(s_apb_o),
+      .m_axi_o(m_axi_o), .m_axi_i(m_axi_i),
+    .phy_gtx_clk_o (phy_gtx_clk_o),
+    .phy_tx_en_o   (phy_tx_en_o),
+    .phy_tx_er_o   (phy_tx_er_o),
+    .phy_txd_o     (phy_txd_o),
+    .phy_rx_clk_i  (phy_rx_clk_i),
+    .phy_rx_dv_i   (phy_rx_dv_i),
+    .phy_rx_er_i   (phy_rx_er_i),
+    .phy_rxd_i     (phy_rxd_i),
+    .mdio_mdc_o    (mdio_mdc_o),
+    .mdio_in_i     (mdio_in_i),
+    .mdio_out_o    (mdio_out_o),
+    .mdio_oe_o     (mdio_oe_o),
+    .irq_o         (irq_o)
+  );
   end else begin : gen_axi
+    assign s_apb_o = '0;
     assign s_wb_o = '0; assign m_wb_o = '0;
     assign s_tl_o = '0; assign m_tl_o = '0;
     eth_mac_axi #(

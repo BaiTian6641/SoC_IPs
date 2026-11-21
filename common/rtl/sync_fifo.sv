@@ -39,6 +39,13 @@ module sync_fifo #(
   assign aempty_o = (cnt_q <= CNT_W'(1));
   assign level_o  = cnt_q;
 
+  // Memory write port without reset (RAM-inferable); pointers/count are what gets reset.
+  always_ff @(posedge clk_i) begin
+    if (do_push && !clr_i) begin
+      mem[wptr_q] <= wdata_i;
+    end
+  end
+
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       wptr_q      <= '0;
@@ -52,7 +59,6 @@ module sync_fifo #(
       rdata_reg_q <= '0;
     end else begin
       if (do_push) begin
-        mem[wptr_q] <= wdata_i;
         wptr_q      <= (wptr_q == PTR_W'(DEPTH - 1)) ? '0 : (wptr_q + 1'b1);
       end
       if (do_pop) begin

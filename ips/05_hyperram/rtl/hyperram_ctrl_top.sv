@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// hyperram_ctrl_top.sv - Parameterized Tri-Bus Wrapper (WB / AXI4 / TileLink) for hyperram_ctrl_core
+// hyperram_ctrl_top.sv - Parameterized Tri-Bus Wrapper (WB / AXI4 / TileLink / APB4) for hyperram_ctrl_core
 
 module hyperram_ctrl_top
   import bus_pkg::*;
@@ -24,6 +24,10 @@ module hyperram_ctrl_top
   output axi4_s2m_t axi_mem_o,
   input  tl_m2s_t   tl_mem_i,
   output tl_s2m_t   tl_mem_o,
+  input  apb_m2s_t  apb_csr_i,
+  output apb_s2m_t  apb_csr_o,
+  input  apb_m2s_t  apb_mem_i,
+  output apb_s2m_t  apb_mem_o,
 
   output logic       hbus_cs_no,
   output logic       hbus_ck_po,
@@ -39,6 +43,8 @@ module hyperram_ctrl_top
 );
 
   if (BUS_TYPE == BUS_WISHBONE) begin : gen_wb
+    assign apb_csr_o = '0; assign apb_mem_o = '0;
+    wire unused_bus = &{1'b0, apb_csr_i, apb_mem_i};
     assign axi_csr_o = '0; assign axi_mem_o = '0;
     assign tl_csr_o  = '0; assign tl_mem_o  = '0;
     hyperram_ctrl_wb u_imp (
@@ -58,6 +64,8 @@ module hyperram_ctrl_top
     .irq_o          (irq_o)
     );
   end else if (BUS_TYPE == BUS_TILELINK) begin : gen_tl
+    assign apb_csr_o = '0; assign apb_mem_o = '0;
+    wire unused_bus = &{1'b0, apb_csr_i, apb_mem_i};
     assign wb_csr_o  = '0; assign wb_mem_o  = '0;
     assign axi_csr_o = '0; assign axi_mem_o = '0;
     hyperram_ctrl_tl u_imp (
@@ -76,7 +84,30 @@ module hyperram_ctrl_top
     .hbus_rwds_oe_o (hbus_rwds_oe_o),
     .irq_o          (irq_o)
     );
+  end else if (BUS_TYPE == BUS_APB) begin : gen_apb
+    assign wb_csr_o  = '0; assign wb_mem_o  = '0;
+    assign axi_csr_o = '0; assign axi_mem_o = '0;
+    assign tl_csr_o  = '0; assign tl_mem_o  = '0;
+    wire unused_bus = &{1'b0, wb_csr_i, wb_mem_i, axi_csr_i, axi_mem_i, tl_csr_i, tl_mem_i};
+    hyperram_ctrl_apb u_imp (
+      .clk_i(clk_i), .rst_ni(rst_ni),
+      .apb_csr_i(apb_csr_i), .apb_csr_o(apb_csr_o),
+      .apb_mem_i(apb_mem_i), .apb_mem_o(apb_mem_o),
+    .hbus_cs_no     (hbus_cs_no),
+    .hbus_ck_po     (hbus_ck_po),
+    .hbus_ck_no     (hbus_ck_no),
+    .hbus_rst_no    (hbus_rst_no),
+    .hbus_dq_i      (hbus_dq_i),
+    .hbus_dq_o      (hbus_dq_o),
+    .hbus_dq_oe_o   (hbus_dq_oe_o),
+    .hbus_rwds_i    (hbus_rwds_i),
+    .hbus_rwds_o    (hbus_rwds_o),
+    .hbus_rwds_oe_o (hbus_rwds_oe_o),
+    .irq_o          (irq_o)
+    );
   end else begin : gen_axi
+    assign apb_csr_o = '0; assign apb_mem_o = '0;
+    wire unused_bus = &{1'b0, apb_csr_i, apb_mem_i};
     assign wb_csr_o = '0; assign wb_mem_o = '0;
     assign tl_csr_o = '0; assign tl_mem_o = '0;
     hyperram_ctrl_axi u_imp (

@@ -1,0 +1,38 @@
+.program quadrature
+.origin 0
+; 16-entry state-transition jump table indexed by {old_BA[1:0], new_BA[1:0]}.
+; in_base = A (pin 0), B (pin 1), in_count = 2, in_right = 0.
+    jmp sample          ; 00 -> 00 (no move)
+    jmp inc_x           ; 00 -> 01 (+1)
+    jmp dec_x           ; 00 -> 10 (-1)
+    jmp sample          ; 00 -> 11 (glitch)
+    jmp dec_x           ; 01 -> 00 (-1)
+    jmp sample          ; 01 -> 01 (no move)
+    jmp sample          ; 01 -> 10 (glitch)
+    jmp inc_x           ; 01 -> 11 (+1)
+    jmp inc_x           ; 10 -> 00 (+1)
+    jmp sample          ; 10 -> 01 (glitch)
+    jmp sample          ; 10 -> 10 (no move)
+    jmp dec_x           ; 10 -> 11 (-1)
+    jmp sample          ; 11 -> 00 (glitch)
+    jmp dec_x           ; 11 -> 01 (-1)
+    jmp inc_x           ; 11 -> 10 (+1)
+    jmp sample          ; 11 -> 11 (no move)
+.entry sample
+.wrap_target
+sample:
+    mov isr, null
+    in  y, 2            ; previous BA
+    in  pins, 2         ; current BA -> ISR[3:0] = {old_BA, new_BA}
+    mov y, isr          ; save current BA in Y[1:0]
+    mov pc, isr         ; computed jump into 0..15
+inc_x:
+    add x, 1
+    mov isr, x
+    push noblock
+    jmp sample
+dec_x:
+    sub x, 1
+    mov isr, x
+    push noblock
+.wrap                   ; wraps back to sample!

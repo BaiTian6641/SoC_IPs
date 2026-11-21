@@ -50,7 +50,9 @@ module width_upsizer_32to64 #(
     wire can_merge = buf_vld_q && narrow_valid_i && narrow_write_i &&
                      (narrow_addr_i[31:3] == buf_addr_q[31:3]) && narrow_addr_i[2];
 
-    wire need_flush = buf_vld_q && (flush_i || (narrow_valid_i && !can_merge));
+    // Never preempt an active/stalled merge on flush_i: merging flushes the buffer and
+    // completes the upper lane in one wide beat without mutating wide_wdata_o/wide_wstrb_o (AR-16).
+    wire need_flush = buf_vld_q && !can_merge && (flush_i || narrow_valid_i);
     wire start_buf  = !buf_vld_q && narrow_valid_i && narrow_write_i && !narrow_addr_i[2] && !flush_i;
 
     always_comb begin

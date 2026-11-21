@@ -1,0 +1,11 @@
+ips/21_par_if/rtl/par_if_pkg.sv
+ips/21_par_if/rtl/par_if_seq.sv
+ips/21_par_if/rtl/par_if_rxpack.sv
+ips/21_par_if/rtl/par_if_dvp.sv
+ips/21_par_if/rtl/par_if_dma.sv
+ips/21_par_if/rtl/par_if_core.sv
+ips/21_par_if/rtl/par_if_wb.sv
+ips/21_par_if/rtl/par_if_axi.sv
+ips/21_par_if/rtl/par_if_tl.sv
+ips/21_par_if/rtl/par_if_apb.sv
+ips/21_par_if/rtl/par_if_top.sv

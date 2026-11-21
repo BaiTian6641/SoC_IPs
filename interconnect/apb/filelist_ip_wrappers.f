@@ -1,0 +1,15 @@
+ips/01_uart_usart/rtl/uart_usart_apb.sv
+ips/02_spi/rtl/spi_apb.sv
+ips/03_i2c_i3c/rtl/i2c_i3c_apb.sv
+ips/04_xspi_xip/rtl/xspi_xip_apb.sv
+ips/05_hyperram/rtl/hyperram_ctrl_apb.sv
+ips/06_sdram_sram_nvsram/rtl/ext_mem_ctrl_apb.sv
+ips/07_nvpsram/rtl/nvpsram_ctrl_apb.sv
+ips/08_gpio/rtl/gpio_apb.sv
+ips/09_i2s/rtl/i2s_apb.sv
+ips/10_ledc/rtl/ledc_apb.sv
+ips/11_jtag/rtl/jtag_apb.sv
+ips/12_can/rtl/can_apb.sv
+ips/13_eth_mac/rtl/eth_mac_apb.sv
+ips/14_dvi_tmds/rtl/dvi_tmds_apb.sv
+ips/17_mini_tpu/rtl/mini_tpu_apb.sv
