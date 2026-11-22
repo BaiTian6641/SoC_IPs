@@ -14,7 +14,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(ROOT, "sv_ip_library.core")
-NAME = "open:soc:sv_peripherals_interconnect_suite:3.0.0"
+NAME = "open:soc:sv_peripherals_interconnect_suite:4.0.0"
 
 
 def expand(flist, seen=None, incdirs=None):

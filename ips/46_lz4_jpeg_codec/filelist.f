@@ -1,0 +1,11 @@
+ips/46_lz4_jpeg_codec/rtl/codec_pkg.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_enc.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_dec.sv
+ips/46_lz4_jpeg_codec/rtl/jpeg_dct_quant.sv
+ips/46_lz4_jpeg_codec/rtl/jpeg_rle_enc.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_jpeg_core.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_jpeg_wb.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_jpeg_axi.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_jpeg_tl.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_jpeg_apb.sv
+ips/46_lz4_jpeg_codec/rtl/lz4_jpeg_top.sv

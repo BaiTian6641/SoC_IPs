@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // mini_tpu_fp_conv.sv - Single-Lane Multi-Format Floating-Point & Integer Converter
-//   * Input Expander : FP32 / INT32 / FP8 E4M3FN / FP8 E5M2 / NVFP4 E2M1 / INT8 -> FP32
-//   * Output Quantizer: FP32 -> FP32 / INT32 / INT8 (+zp) / FP8 E4M3FN / FP8 E5M2 / NVFP4 E2M1
+//   * Input Expander : FP32 / INT32 / FP8 E4M3FN / FP8 E5M2 / NVFP4 E2M1 / INT8 / BF16 / FP16 -> FP32
+//   * Output Quantizer: FP32 -> FP32 / INT32 / INT8 (+zp) / FP8 E4M3FN / FP8 E5M2 / NVFP4 E2M1 / BF16 / FP16
 
 module mini_tpu_fp_conv
   import mini_tpu_pkg::*;
@@ -27,6 +27,8 @@ module mini_tpu_fp_conv
       3'd3:    in_fp32_o = fp8_e5m2_to_fp32(in_raw_i[7:0]);
       3'd4:    in_fp32_o = e2m1_to_fp32(in_raw_i[3:0]);
       3'd5:    in_fp32_o = int32_to_fp32(32'(signed'(in_raw_i[7:0])));
+      3'd6:    in_fp32_o = bf16_to_fp32(in_raw_i[15:0]);
+      3'd7:    in_fp32_o = fp16_to_fp32(in_raw_i[15:0]);
       default: in_fp32_o = in_raw_i;
     endcase
 
@@ -43,6 +45,8 @@ module mini_tpu_fp_conv
       OUT_FP8_E4M3: out_quant_o = {24'd0, fp32_to_fp8_e4m3(out_fp32_i)};
       OUT_FP8_E5M2: out_quant_o = {24'd0, fp32_to_fp8_e5m2(out_fp32_i)};
       OUT_NVFP4:    out_quant_o = {28'd0, fp32_to_e2m1(nvfp4_scaled)};
+      OUT_BF16:     out_quant_o = {16'd0, fp32_to_bf16(out_fp32_i)};
+      OUT_FP16:     out_quant_o = {16'd0, fp32_to_fp16(out_fp32_i)};
       default:      out_quant_o = out_fp32_i;
     endcase
   end

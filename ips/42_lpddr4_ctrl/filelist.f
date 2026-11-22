@@ -1,0 +1,14 @@
+ips/42_lpddr4_ctrl/rtl/lpddr4_pkg.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ca_enc.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_init_fsm.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ch_sched.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_phy_soft.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ctrl_core.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_axi4_to_mem.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_wb_to_mem.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_tl_to_mem.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ctrl_wb.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ctrl_axi.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ctrl_tl.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ctrl_apb.sv
+ips/42_lpddr4_ctrl/rtl/lpddr4_ctrl_top.sv

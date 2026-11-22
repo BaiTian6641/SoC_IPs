@@ -41,3 +41,14 @@
 -f ips/38_ddr_ctrl/filelist.f
 -f ips/39_serdes_combo/filelist.f
 -f ips/40_usb2_otg/filelist.f
+-f ips/41_lpddr3_ctrl/filelist.f
+-f ips/42_lpddr4_ctrl/filelist.f
+-f ips/43_ddr_dimm_ctrl/filelist.f
+-f ips/44_sdram_hp/filelist.f
+-f ips/45_isp_lite/filelist.f
+-f ips/46_lz4_jpeg_codec/filelist.f
+-f ips/47_l2_cache/filelist.f
+-f ips/48_iommu/filelist.f
+-f ips/49_foc_motor/filelist.f
+-f ips/50_smbus_pmbus/filelist.f
+-f ips/51_axi_pmu_trace/filelist.f

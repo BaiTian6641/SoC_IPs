@@ -12,7 +12,7 @@ Related guides: [00 architecture](00_architecture_overview.md) ·
 [04 Chrom-ART 2D GPU](04_chromart_2d_gpu_guide.md) · [05 Mini-TPU/NPU](05_mini_tpu_npu_guide.md) ·
 [06 APB4 fabric](06_apb_fabric_guide.md) · [07 GDMA2 guide](07_dma_guide.md) ·
 [09 audit findings](09_review_findings.md) · [10 verification methodology (`vkit`)](10_verification_methodology.md) ·
-[11 Yosys/FPGA/ASIC guide](11_yosys_fpga_asic_guide.md)
+[11 Yosys/FPGA/ASIC guide](11_yosys_fpga_asic_guide.md) · [12 SW drivers & bring-up](12_software_drivers_and_bringup.md)
 
 > **APB DMA-master convention**: APB has no master role. For `BUS_APB` an IP's slave
 > side is the `apb_i/apb_o` (or `s_apb_i/s_apb_o`) port and its DMA master port is the
@@ -38,7 +38,7 @@ Related guides: [00 architecture](00_architecture_overview.md) ·
 | 14 | `ips/14_dvi_tmds` | `dvi_tmds_top` | DVI/HDMI TMDS encoder + timing | `tmds_*` 10-bit lanes | [README](../ips/14_dvi_tmds/doc/README.md) |
 | 15 | `ips/15_dma_gdma` | `gdma_top` | GDMA2 1..16ch 1D/2D/3D DMA (SG, circular, CRC32/32C, BSWAP/HSWAP/BITREV, FILL, QoS aging) | `dma_req/ack/last`, `trig_i` | [README](../ips/15_dma_gdma/doc/README.md) · [Guide](07_dma_guide.md) |
 | 16 | `ips/16_gfx2d_dma` | `gfx2d_dma_top` | Chrom-ART style 2D GPU / DMA2D | - | [README](../ips/16_gfx2d_dma/doc/README.md) · [Guide](04_chromart_2d_gpu_guide.md) |
-| 17 | `ips/17_mini_tpu` | `mini_tpu_top` | Programmable NVFP4/FP8/INT8 NPU | AXIS `s_axis/m_axis` | [README](../ips/17_mini_tpu/doc/README.md) · [Guide](05_mini_tpu_npu_guide.md) |
+| 17 | `ips/17_mini_tpu` | `mini_tpu_top` | Mini-TPU v2.0 NPU (BF16/FP16/INT4/FP8/NVFP4, Conv2D, Pool, Vec-EW/RMSNorm/Softmax, ping-pong banks, `tpu_asm.py`) | AXIS `s_axis/m_axis`, `irq_o` | [README](../ips/17_mini_tpu/doc/README.md) · [Guide](05_mini_tpu_npu_guide.md) |
 | 18 | `ips/18_rmt` | `rmt_top` | Multi-channel RMT pulse-train transceiver & WS2812/SK6812/APA102 LED encoder (`NUM_CH=2..8`) | `rmt_i/o/oe_o` | [README](../ips/18_rmt/doc/README.md) |
 | 19 | `ips/19_ir_txrx` | `ir_txrx_top` | Hardware IR TX/RX engine (NEC/Samsung32/RC5/RC6/SIRC/JVC/Kaseikyo, RAW, Learn, Wake) | `ir_tx_o`, `ir_txenv_o`, `ir_rx_i`, `ir_raw_i`, `ir_wake_o` | [README](../ips/19_ir_txrx/doc/README.md) |
 | 20 | `ips/20_hub75` | `hub75_top` | HUB75/HUB75E LED-matrix controller (DMA FB, BCM, gamma LUT, chip init, multi-lane/mux) | `hub75_r1/g1/b1/r2/g2/b2_o`, `clk/lat/oe_n/addr_o` | [README](../ips/20_hub75/doc/README.md) |
@@ -62,6 +62,17 @@ Related guides: [00 architecture](00_architecture_overview.md) ·
 | 38 | `ips/38_ddr_ctrl` | `ddr_ctrl_top` | DDR2 / DDR3 / DDR4 Controller (16-bank FR-FCFS, SECDED ECC, DFI 4.0/5.0 & Soft PHY) | `dfi_*` / `ddr_*` pads, `mem_*`, `irq_o` | [README](../ips/38_ddr_ctrl/doc/README.md) |
 | 39 | `ips/39_serdes_combo` | `serdes_combo_top` | Multi-Protocol SerDes Combo (8b/10b + 128b/130b PCS, Elastic Buf, PRBS, PCIe/USB3/SATA/DP+AUX, Soft/Hard PMA) | `pma_*` / `serdes_tx/rx`, `dp_aux_*`, AXIS, `mem_*`, `irq_o` | [README](../ips/39_serdes_combo/doc/README.md) |
 | 40 | `ips/40_usb2_otg` | `usb2_otg_top` | USB 2.0 Device & Host-Lite (8 EPs, SETUP, 4KB-safe Burst/SG DMA, UTMI+/ULPI/Soft-FS PHY) | `utmi_*` / `ulpi_*` / `usb_dp/dm`, `irq_o` | [README](../ips/40_usb2_otg/doc/README.md) |
+| 41 | `ips/41_lpddr3_ctrl` | `lpddr3_ctrl_top` | LPDDR2/LPDDR3 SDRAM Controller (10b DDR `CA[9:0]`, 8-bank FR-FCFS, `REFPB`, CA train, `PASR`/`DPD`, DFI & Soft PHY) | `dram_*` / `dfi_*`, `irq_o` | [README](../ips/41_lpddr3_ctrl/doc/README.md) |
+| 42 | `ips/42_lpddr4_ctrl` | `lpddr4_ctrl_top` | Dual-Channel LPDDR4/4X Controller (`2x16b`, 6b `CA[5:0]`, `MWR`, `DBI-WR/RD`, `FSP0/1` DVFS, `MPC` train, DFI 4/5 & Soft PHY) | `dram_ch0/ch1_*` / `dfi_*`, `fsp_active_o`, `irq_o` | [README](../ips/42_lpddr4_ctrl/doc/README.md) |
+| 43 | `ips/43_ddr_dimm_ctrl` | `ddr_dimm_ctrl_top` | Multi-Rank DDR3/DDR4 DIMM Controller (U/SO/R/LR-DIMM + CAMM2, I2C SPD + TSOD, WL/RG train, SECDED(72,64), DFI & Soft PHY) | `dram_*` / `dfi_*`, `i2c_scl/sda_*`, `irq_o` | [README](../ips/43_ddr_dimm_ctrl/doc/README.md) |
+| 44 | `ips/44_sdram_hp` | `sdram_hp_top` | High-Throughput 4-Bank Open-Page SDR SDRAM Controller (`SDRAM_DATA_W=16/32`, look-ahead PRE/ACT, Auto-PD/SRE) | `sdram_clk/cke/cs_n/ras_n/cas_n/we_n/ba/addr/dqm/dq_*` | [README](../ips/44_sdram_hp/doc/README.md) |
+| 45 | `ips/45_isp_lite` | `isp_lite_top` | 6-Stage Camera ISP-Lite (BLC, DPC, Demosaic, AWB/AE 2A stats, 3x3 CCM, 256-LUT Gamma, 2x2 downscale, AXIS) | AXIS `s_axis/m_axis`, `irq_o` | [README](../ips/45_isp_lite/doc/README.md) |
+| 46 | `ips/46_lz4_jpeg_codec` | `lz4_jpeg_top` | Dual-Engine Hardware LZ4 Block Codec & 8x8 Baseline JPEG DCT/Quant/RLE Codec (AXIS + CSR FIFOs + DMA) | AXIS `s_axis/m_axis`, `dma_rx/tx_req_o`, `irq_o` | [README](../ips/46_lz4_jpeg_codec/doc/README.md) |
+| 47 | `ips/47_l2_cache` | `l2_cache_top` | 4-Way Set-Associative Write-Back AXI4 L2 Cache (PLRU, SECDED(39,32) ECC, clean/inv maint, way-lock, uncache win) | `s_axi_mem_*`, `m_axi_mem_*`, `irq_o` | [README](../ips/47_l2_cache/doc/README.md) |
+| 48 | `ips/48_iommu` | `iommu_top` | Hardware IOMMU / SMMU-Lite (`Sv32` 2-level PTW, 4KB/4MB, 16-entry TLB, 16 streams, fault FIFO) | `s_axi_dev_*`, `m_axi_mem_*`, `aw/ar_stream_id_i`, `irq_o` | [README](../ips/48_iommu/doc/README.md) |
+| 49 | `ips/49_foc_motor` | `foc_motor_top` | Hardware 3-Phase PMSM/BLDC FOC Accelerator (CORDIC, Clarke/Park, d/q PI + circle limit, 7-seg SVPWM, dead-time, fault) | `adc_*`, `enc_theta_i`, `pwm_ah/al/bh/bl/ch/cl_o`, `fault_i`, `adc_trig_o`, `irq_o` | [README](../ips/49_foc_motor/doc/README.md) |
+| 50 | `ips/50_smbus_pmbus` | `smbus_pmbus_top` | SMBus 3.0 / PMBus 1.3 Host & Target (HW PEC CRC-8, `SMBALERT#` ARA `7'h0C`, ARP `7'h61`, timeouts, 64B FIFOs) | `scl/sda/smbalert_n` split `_i/_o/_oe_o`, `irq_o` | [README](../ips/50_smbus_pmbus/doc/README.md) |
+| 51 | `ips/51_axi_pmu_trace` | `axi_pmu_trace_top` | Non-Intrusive AXI4 PMU, 8-Bin Latency Histogrammer, & Triggered Circular 128b Trace SRAM (shadow snapshot) | Passive tap `tap_m2s_i`, `tap_s2m_i`, `irq_o` | [README](../ips/51_axi_pmu_trace/doc/README.md) |
 
 ## 2. Infrastructure
 
@@ -83,7 +94,7 @@ Legend: `-` not delivered · `LINT` lint-clean in `make lint` · `TB` testbench 
 | 04 xspi_xip (v1+v2) | yes | `xspi_xip_top` `xspi_xip_v2_top` | `tb_xspi_xip` `tb_xspi_xip_v2` | LINT+TB (`[READY]`) |
 | 15 gdma | yes | `gdma_top` | `tb_gdma` `tb_gdma_rand` | LINT+TB (`[READY]`, GDMA2 + quad-bus) |
 | 16 gfx2d_dma | yes | `gfx2d_dma_top` | `tb_gfx2d_dma` `tb_gfx2d_rand` | LINT+TB (`[READY]`, quad-bus + Chrom-ART refinement) |
-| 17 mini_tpu | yes | `mini_tpu_top` | `tb_mini_tpu` | LINT+TB (quad-bus + `.s_apb_*` wired) |
+| 17 mini_tpu (v2.0) | yes | `mini_tpu_top` | `tb_mini_tpu` `tb_mini_tpu_v2` | LINT+TB (quad-bus + v2.0 + `tpu_asm.py`) |
 | APB4 fabric | yes (`interconnect/apb/filelist.f`) | 11 modules | `tb_apb_fabric` `tb_apb_peripherals` | LINT+TB (`[READY]`) |
 | AXIS utils | yes (`interconnect/axis/filelist.f`) | 8 modules | `tb_axis_utils` | LINT+TB (`[AXIS READY]`) |
 | `vkit` fabric/CSR suite | yes (`tb/vkit/filelist.f`) | - | `tb_vkit_csr_selftest`, `tb_vkit_{axi,apb,wb,tl}_xbar_rand`, `tb_vkit_smart_switch_rand` | LINT+TB (`[READY-VERIFIED]`, all 6 pass) |
@@ -112,3 +123,14 @@ Legend: `-` not delivered · `LINT` lint-clean in `make lint` · `TB` testbench 
 | 38 ddr_ctrl | yes | `ddr_ctrl_top` | `tb_ddr_ctrl` | LINT+TB (`[READY]`) |
 | 39 serdes_combo | yes | `serdes_combo_top` | `tb_serdes_combo` | LINT+TB (`[READY]`) |
 | 40 usb2_otg | yes | `usb2_otg_top` | `tb_usb2_otg` | LINT+TB (`[READY]`) |
+| 41 lpddr3_ctrl | yes | `lpddr3_ctrl_top` | `tb_lpddr3_ctrl` | LINT+TB (`[READY]`) |
+| 42 lpddr4_ctrl | yes | `lpddr4_ctrl_top` | `tb_lpddr4_ctrl` | LINT+TB (`[READY]`) |
+| 43 ddr_dimm_ctrl | yes | `ddr_dimm_ctrl_top` | `tb_ddr_dimm_ctrl` | LINT+TB (`[READY]`) |
+| 44 sdram_hp | yes | `sdram_hp_top` | `tb_sdram_hp` | LINT+TB (`[READY]`) |
+| 45 isp_lite | yes | `isp_lite_top` | `tb_isp_lite` | LINT+TB (`[READY]`) |
+| 46 lz4_jpeg_codec | yes | `lz4_jpeg_top` | `tb_lz4_jpeg_codec` | LINT+TB (`[READY]`) |
+| 47 l2_cache | yes | `l2_cache_top` | `tb_l2_cache` | LINT+TB (`[READY]`) |
+| 48 iommu | yes | `iommu_top` | `tb_iommu` | LINT+TB (`[READY]`) |
+| 49 foc_motor | yes | `foc_motor_top` | `tb_foc_motor` | LINT+TB (`[READY]`) |
+| 50 smbus_pmbus | yes | `smbus_pmbus_top` | `tb_smbus_pmbus` | LINT+TB (`[READY]`) |
+| 51 axi_pmu_trace | yes | `axi_pmu_trace_top` | `tb_axi_pmu_trace` | LINT+TB (`[READY]`) |

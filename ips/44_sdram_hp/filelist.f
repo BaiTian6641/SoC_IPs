@@ -1,0 +1,11 @@
+ips/44_sdram_hp/rtl/sdram_hp_pkg.sv
+ips/44_sdram_hp/rtl/sdram_hp_sched.sv
+ips/44_sdram_hp/rtl/sdram_hp_core.sv
+ips/44_sdram_hp/rtl/sdram_hp_wb_to_mem.sv
+ips/44_sdram_hp/rtl/sdram_hp_axi4_to_mem.sv
+ips/44_sdram_hp/rtl/sdram_hp_tl_to_mem.sv
+ips/44_sdram_hp/rtl/sdram_hp_wb.sv
+ips/44_sdram_hp/rtl/sdram_hp_axi.sv
+ips/44_sdram_hp/rtl/sdram_hp_tl.sv
+ips/44_sdram_hp/rtl/sdram_hp_apb.sv
+ips/44_sdram_hp/rtl/sdram_hp_top.sv

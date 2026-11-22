@@ -17,12 +17,12 @@ This collection is organized into three strictly layered tiers written in pure s
    - `interconnect/crossbars/`: Protocol-native `M x N` non-blocking crossbars (`wb_xbar`, `axi4_xbar`, `tl_xbar`, `apb_xbar`) with QoS + aging arbitration, optional pipeline slices, and unmapped/error handling.
    - `interconnect/smart_switch/`: Heterogeneous any-to-any matrix (`smart_switch_interconnect`) plus 32 <-> 64-bit data width converters (`width_upsizer_downsizer`, `width_upsizer_32to64`).
 
-3. **Quad-Bus Peripheral, Memory, Security, Video, SerDes, & System IPs (`ips/01..40`)**
+3. **Quad-Bus Peripheral, Memory, AI/Vision, AP/Coherency, Industrial, & System IPs (`ips/01..51`)**
    - Every IP follows a modular split:
      - `*_core.sv` (+ helper submodules): Pure protocol-independent datapath, scratchpads/SRAMs, FSMs/sequencers, and CSR register file.
      - `*_{wb,axi,tl,apb}.sv`: Thin protocol wrappers instantiating the shared CSR slave and DMA master adapters from `interconnect/adapters/` (for `BUS_APB`, DMA-capable IPs expose their DMA master on `m_axi_o/m_axi_i` per the [APB DMA-master convention](06_apb_fabric_guide.md)).
      - `*_top.sv`: Unified top-level module parameterized by `BUS_TYPE` (`BUS_WISHBONE`, `BUS_AXI4`, `BUS_TILELINK`, `BUS_APB`) so integrators maintain one IP drop-in regardless of SoC fabric choice.
-   - Full catalog of all 40 IPs (`01`..`40`) + `common/rtl/tech/` library: [08 IP Catalog](08_ip_catalog.md).
+   - Full catalog of all 51 IPs (`01`..`51`) + `common/rtl/tech/` library: [08 IP Catalog](08_ip_catalog.md) · Software drivers & bare-metal bring-up recipes: [12 Software Drivers & Bring-Up](12_software_drivers_and_bringup.md).
 
 ## Multi-Master / Multi-Slave Heterogeneous Dataflow
 

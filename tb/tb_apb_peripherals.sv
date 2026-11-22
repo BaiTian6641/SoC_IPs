@@ -582,7 +582,8 @@ module tb_apb_peripherals;
     // MINI_TPU (BUS_APB slave + AXI4 DMA master convention check)
     // ================================================================
     rchk(P_TPU, 32'h0038, 32'h4E50_5531, 32'hFFFF_FFFF);          // REG_FEATURE_ID ("NPU1")
-    rerr(P_TPU, 32'h003C);                                        // bad CSR offset -> pslverr
+    rchk(P_TPU, 32'h003C, 32'h5632_0000, 32'hFFFF_0000);          // REG_V2_STAT ("V2..")
+    rerr(P_TPU, 32'h0040);                                        // bad CSR offset -> pslverr
     w(P_TPU, 32'h0020, 32'h8000_1234);                            // REG_DMA_BASE0
     rchk(P_TPU, 32'h0020, 32'h8000_1234, 32'hFFFF_FFFF);
     w(P_TPU, 32'h0024, 32'h9000_5678);                            // REG_DMA_BASE1

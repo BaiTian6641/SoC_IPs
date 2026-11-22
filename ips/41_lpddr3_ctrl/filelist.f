@@ -1,0 +1,14 @@
+ips/41_lpddr3_ctrl/rtl/lpddr3_pkg.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ca_enc.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_init_fsm.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_sched.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_phy_soft.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ctrl_core.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_axi4_to_mem.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_wb_to_mem.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_tl_to_mem.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ctrl_wb.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ctrl_axi.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ctrl_tl.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ctrl_apb.sv
+ips/41_lpddr3_ctrl/rtl/lpddr3_ctrl_top.sv

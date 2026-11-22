@@ -1,0 +1,12 @@
+ips/49_foc_motor/rtl/foc_pkg.sv
+ips/49_foc_motor/rtl/foc_cordic_sincos.sv
+ips/49_foc_motor/rtl/foc_clarke_park.sv
+ips/49_foc_motor/rtl/foc_pi_ctrl.sv
+ips/49_foc_motor/rtl/foc_svpwm.sv
+ips/49_foc_motor/rtl/foc_pwm_gen.sv
+ips/49_foc_motor/rtl/foc_motor_core.sv
+ips/49_foc_motor/rtl/foc_motor_wb.sv
+ips/49_foc_motor/rtl/foc_motor_axi.sv
+ips/49_foc_motor/rtl/foc_motor_tl.sv
+ips/49_foc_motor/rtl/foc_motor_apb.sv
+ips/49_foc_motor/rtl/foc_motor_top.sv

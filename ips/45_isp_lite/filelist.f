@@ -1,0 +1,14 @@
+ips/45_isp_lite/rtl/isp_pkg.sv
+ips/45_isp_lite/rtl/isp_linebuf.sv
+ips/45_isp_lite/rtl/isp_blc.sv
+ips/45_isp_lite/rtl/isp_dpc.sv
+ips/45_isp_lite/rtl/isp_demosaic.sv
+ips/45_isp_lite/rtl/isp_awb_ae.sv
+ips/45_isp_lite/rtl/isp_ccm.sv
+ips/45_isp_lite/rtl/isp_gamma_out.sv
+ips/45_isp_lite/rtl/isp_lite_core.sv
+ips/45_isp_lite/rtl/isp_lite_wb.sv
+ips/45_isp_lite/rtl/isp_lite_axi.sv
+ips/45_isp_lite/rtl/isp_lite_tl.sv
+ips/45_isp_lite/rtl/isp_lite_apb.sv
+ips/45_isp_lite/rtl/isp_lite_top.sv

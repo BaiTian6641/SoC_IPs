@@ -1,6 +1,6 @@
-# Mini-TPU / Multi-Precision NPU (`mini_tpu`) Architecture & Programming Guide
+# Mini-TPU / Multi-Precision NPU (`mini_tpu` v2.0) Architecture & Programming Guide
 
-The `ips/17_mini_tpu` core is a 100% pure, synthesizable **IEEE 1800-2017 SystemVerilog** programmable Neural Processing Unit (NPU) and Tensor Accelerator. It combines a 64-bit microcode sequencer (`IMEM` + 2-level zero-overhead hardware loops), banked on-chip tensor scratchpads (`ABUF`, `WBUF`, `SBUF`, `OBUF`), a **`4 x 4 x 16` (`256` MACs/op) multi-precision tensor MAC array** supporting **NVFP4** (4-bit `E2M1` with per-16-element `FP8 E4M3FN` micro-block scaling), **FP8** (`E4M3FN`, `E5M2`, and mixed `E4M3 x E5M2`), and **INT8** (symmetric `SINT8` and asymmetric `UINT8 x SINT8` with zero-points), a **4-lane FP32 Special Function & Requantization Unit (SFU)**, an autonomous **2D 4KB-safe strided DMA engine**, **direct AXI-Stream-style ready/valid tensor streaming (`s_axis_*` / `m_axis_*`)**, and unified **Wishbone B4**, **AXI4**, and **TileLink TL-UL/TL-UH** dual-bus wrappers.
+The `ips/17_mini_tpu` core is a 100% pure, synthesizable **IEEE 1800-2017 SystemVerilog** programmable Neural Processing Unit (NPU) and Tensor Accelerator. It combines a 64-bit microcode sequencer (`IMEM` + 2-level zero-overhead hardware loops, opcodes `4'h0..4'hB`), dual-banked ping-pong on-chip tensor scratchpads (`2x512b ABUF`, `2x512b WBUF`, `SBUF`, `OBUF`), a **`4 x 4 x 16` (`256` MACs/cmd, `128` MACs/cmd in `BF16`/`FP16`) multi-precision tensor MAC array** supporting **NVFP4**, **INT4** (unscaled `INT32` or AWQ/GPTQ `FP8 E4M3` block-scaled `FP32`), **BF16**, **FP16**, **FP8** (`E4M3FN`, `E5M2`, mixed), and **INT8** (symmetric & asymmetric), a **4-lane FP32 Special Function & Requantization Unit (SFU)**, hardware **2D Im2Col Convolution (`OP_CONV2D`)**, **2D Max/Avg Pooling (`OP_POOL`)**, **Vector Elementwise + RMSNorm + 3-Pass Softmax (`OP_VEC_EW`)**, **Ping-Pong Bank Swap (`OP_SYNC_BANK`)**, an autonomous **decoupled 2D 4KB-safe strided DMA engine**, **direct AXI-Stream-style ready/valid tensor streaming (`s_axis_*` / `m_axis_*`)**, and unified **Wishbone B4**, **AXI4**, **TileLink TL-UL/TL-UH**, and **AMBA APB4** wrappers.
 
 ---
 
@@ -75,22 +75,26 @@ flowchart LR
 | `mini_tpu_wb.sv` | `mini_tpu_wb` | Wishbone B4 CSR/aperture slave (`wb_to_csr`) + pipelined DMA master (`mem_to_wb_master`) wrapper |
 | `mini_tpu_axi.sv` | `mini_tpu_axi` | AXI4-Lite CSR/aperture slave (`axi_lite_to_csr`) + AXI4 burst DMA master (`mem_to_axi4_master`) wrapper |
 | `mini_tpu_tl.sv` | `mini_tpu_tl` | TileLink TL-UL CSR/aperture slave (`tl_ul_to_csr`) + TL-UH burst DMA master (`mem_to_tl_uh_master`) wrapper |
-| `mini_tpu_top.sv` | `mini_tpu_top` | Unified parameterizable top-level (`BUS_TYPE`: `BUS_WISHBONE`, `BUS_AXI4`, `BUS_TILELINK`) with direct streaming ports and `irq_o` |
+| `mini_tpu_apb.sv` | `mini_tpu_apb` | AMBA APB4 CSR/aperture slave (`apb_to_csr`) + AXI4 burst DMA master (`mem_to_axi4_master`) wrapper |
+| `mini_tpu_top.sv` | `mini_tpu_top` | Unified parameterizable top-level (`BUS_TYPE`: `BUS_WISHBONE`, `BUS_AXI4`, `BUS_TILELINK`, `BUS_APB`) with direct streaming ports and `irq_o` |
 
 ---
 
 ## 2. Supported Data Types & Precision Mathematics
 
-### 2.1 Precision Mode Summary (`prec_mode_e`)
+### 2.1 Precision Mode Summary (`prec_mode_e` + `prec_ext` / `int4_scale_en`)
 
-| `prec_mode` | Enum Name | Activation (`A`) | Weight (`B`) | Block Scale (`S_A, S_B`) | Accumulator | MACs / Cmd |
-| :---: | :--- | :--- | :--- | :--- | :---: | :---: |
-| `3'd0` | `PREC_INT8_SYM` | Signed `SINT8` | Signed `SINT8` | None | Signed `INT32` | `256` |
-| `3'd1` | `PREC_INT8_ASYM` | Unsigned `UINT8` (`zp_a`) | Signed `SINT8` (`zp_b`) | None | Signed `INT32` | `256` |
-| `3'd2` | `PREC_FP8_E4M3` | `OFP8 E4M3FN` | `OFP8 E4M3FN` | None | IEEE-754 `FP32` | `256` |
-| `3'd3` | `PREC_FP8_E5M2` | `FP8 E5M2` | `FP8 E5M2` | None | IEEE-754 `FP32` | `256` |
-| `3'd4` | `PREC_FP8_MIXED` | `OFP8 E4M3FN` | `FP8 E5M2` | None | IEEE-754 `FP32` | `256` |
-| `3'd5` | `PREC_NVFP4` | `16x FP4 E2M1` (`64b`) | `16x FP4 E2M1` (`64b`) | `FP8 E4M3FN` per `16` elems | IEEE-754 `FP32` | `256` |
+| `prec_ext` | `prec_mode` | Enum / Profile | Activation (`A`) | Weight (`B`) | Block Scale (`S_A, S_B`) | Accumulator | MACs / Cmd |
+| :---: | :---: | :--- | :--- | :--- | :--- | :---: | :---: |
+| `0` | `3'd0` | `PREC_INT8_SYM` | Signed `SINT8` | Signed `SINT8` | None | Signed `INT32` | `256` |
+| `0` | `3'd1` | `PREC_INT8_ASYM` | Unsigned `UINT8` (`zp_a`) | Signed `SINT8` (`zp_b`) | None | Signed `INT32` | `256` |
+| `0` | `3'd2` | `PREC_FP8_E4M3` | `OFP8 E4M3FN` | `OFP8 E4M3FN` | None | IEEE-754 `FP32` | `256` |
+| `0` | `3'd3` | `PREC_FP8_E5M2` | `FP8 E5M2` | `FP8 E5M2` | None | IEEE-754 `FP32` | `256` |
+| `0` | `3'd4` | `PREC_FP8_MIXED` | `OFP8 E4M3FN` | `FP8 E5M2` | None | IEEE-754 `FP32` | `256` |
+| `0` | `3'd5` | `PREC_NVFP4` | `16x FP4 E2M1` (`64b`) | `16x FP4 E2M1` (`64b`) | `FP8 E4M3FN` per `16` elems | IEEE-754 `FP32` | `256` |
+| `0` | `3'd6` | `PREC_BF16` | `8x BF16` (`128b`) | `8x BF16` (`128b`) | None | IEEE-754 `FP32` | `128` |
+| `0` | `3'd7` | `PREC_FP16` | `8x FP16` (`128b`) | `8x FP16` (`128b`) | None | IEEE-754 `FP32` | `128` |
+| `1` | `3'd0` | `INT4` (`int4_scale_en=0/1`) | `16x SINT4` (`64b`) | `16x SINT4` (`64b`) | Optional `FP8 E4M3FN` per `16` elems | `INT32` (`scale=0`) / `FP32` (`scale=1`) | `256` |
 
 ---
 
@@ -213,6 +217,19 @@ y  = activation(x, act_mode_i)
 | `3'd3` | `OUT_FP8_E4M3` | `4` (`1` word) | Convert 4 lanes via `fp32_to_fp8_e4m3` (saturating at `±448.0`), pack `{b3, b2, b1, b0}` in `res_words_o[0]` |
 | `3'd4` | `OUT_FP8_E5M2` | `4` (`1` word) | Convert 4 lanes via `fp32_to_fp8_e5m2`, pack `{b3, b2, b1, b0}` in `res_words_o[0]` |
 | `3'd5` | `OUT_NVFP4` | `2` (`16` bits) | If `nvfp4_out_scale_i != 8'h00`, multiply `y` by `fp8_e4m3_to_fp32(nvfp4_out_scale_i)`; quantize via `fp32_to_e2m1` into `{n3, n2, n1, n0}` in `res_words_o[0][15:0]` (`OP_SFU` packs pairs of consecutive 4-lane halfwords `{vec_odd[15:0], vec_even[15:0]}` into full 32-bit scratchpad words) |
+| `3'd6` | `OUT_BF16` | `8` (`2` words) | RNE convert 4 lanes to `BF16` (`1s/8e/7m`), pack `{b1, b0}` into `res_words_o[0]` and `{b3, b2}` into `res_words_o[1]` |
+| `3'd7` | `OUT_FP16` | `8` (`2` words) | RNE convert 4 lanes to IEEE `FP16` (`1s/5e/10m`), pack `{h1, h0}` into `res_words_o[0]` and `{h3, h2}` into `res_words_o[1]` |
+
+### 2.6 v2.0 Precisions: `BF16`, `FP16`, and `INT4`
+
+- **`PREC_BF16` (`3'd6`) & `PREC_FP16` (`3'd7`)**:
+  - Pack `8` 16-bit elements per `128`-bit vector (`4` consecutive 32-bit words: `word0 = {e1, e0}`, ..., `word3 = {e7, e6}`).
+  - Each `k_idx` in `OP_GEMM` / `OP_CONV2D` executes an **8-wide dot product** (`128` MACs/cmd) accumulated in IEEE-754 `FP32`, so `k_groups = K / 8`.
+  - `fp16_to_fp32` / `fp32_to_fp16` implement full IEEE-754 binary16 subnormal normalization and RNE rounding.
+- **`INT4` (`prec_ext = 1, prec_mode = 3'd0`)**:
+  - Packs `16` two's-complement `SINT4` (`[-8, +7]`) nibbles into `64` bits (`2` words per row/col per K-group), matching `NVFP4`'s nibble order.
+  - When `int4_scale_en == 0`: exact `INT32` accumulation (`acc_out = acc_in + sum_{k=0..15} a[k]*b[k]`).
+  - When `int4_scale_en == 1`: AWQ/GPTQ-style block-scaled `FP32` accumulation (`acc_out = acc_in + float(dot_i32) * fp8_e4m3(S_A) * fp8_e4m3(S_B)`), reading `FP8 E4M3FN` block scales from `SBUF`.
 
 ---
 
@@ -234,6 +251,10 @@ y  = activation(x, act_mode_i)
 | `4'h5` | `OP_SFU` | Multi-vector (`num_vec4`) bias + scale + activation + requantization to `OBUF` or `ABUF` (`dst_is_abuf`) |
 | `4'h6` | `OP_LOOP` | Zero-overhead 2-level hardware loop counter init (`is_init=1`) or decrement-and-branch (`is_init=0`) |
 | `4'h7` | `OP_HALT` | Terminates program (`DONE=1` when `is_break=0`) or pauses at breakpoint (`BREAK=1`, `PC+1` when `is_break=1`) |
+| `4'h8` | `OP_CONV2D` | Hardware `im2col` sliding-window 2D convolution (`ABUF[H,W,C_in]` * `WBUF[KH,KW,C_out,C_in]` -> `OBUF[H_out,W_out,C_out]`) |
+| `4'h9` | `OP_POOL` | Hardware 2D `MAXPOOL` / `AVGPOOL` (`2x2` or `3x3`, stride `1` or `2`) on `FP32`, packed `INT8`, `BF16`, or `FP16` feature maps |
+| `4'hA` | `OP_VEC_EW` | Vector elementwise (`EW_ADD`, `EW_SUB`, `EW_MUL`), `EW_RMSNORM` (`rsqrt` + `gamma`), and 3-pass `EW_SOFTMAX` |
+| `4'hB` | `OP_SYNC_BANK` | Double-buffer ping-pong `ABUF`/`WBUF` 2 KB half-bank swap and async background DMA barrier |
 
 ---
 
@@ -249,21 +270,25 @@ y  = activation(x, act_mode_i)
 - `[56:54]`: `act_mode[2:0]` (`act_mode_e`)
 - `[53:51]`: `out_fmt[2:0]` (`out_fmt_e`)
 - `[50]`: `set_global_scale`
+- `[49]`: `prec_ext` (`1` selects `INT4` when `prec_mode == 3'd0`)
+- `[48]`: `int4_scale_en` (`1` enables per-16-element `FP8 E4M3FN` block scaling for `INT4`)
   - When `set_global_scale == 1'b0`:
-    - `[49:32]`: Reserved (`0`)
+    - `[47:32]`: Reserved (`0`)
     - `[31:24]`: `zp_b[7:0]` (weight zero-point)
     - `[23:16]`: `zp_a[7:0]` (activation zero-point)
     - `[15:8]`: `nvfp4_out_scale[7:0]` (`FP8 E4M3FN` pre-quantization multiplier for `OUT_NVFP4`)
     - `[7:0]`: `out_zp[7:0]` (output signed INT8 zero-point for `OUT_INT8`)
   - When `set_global_scale == 1'b1`:
-    - `[49:32]`: Reserved (`0`)
+    - `[47:32]`: Reserved (`0`)
     - `[31:0]`: `global_scale_fp32[31:0]` (IEEE-754 `FP32` written to `REG_GLOBAL_SCALE`)
 
 #### 3. `OP_DMA_LD` (`opcode = 4'h2`) & `OP_DMA_ST` (`opcode = 4'h3`)
 - `[63:60]`: `4'h2` (`OP_DMA_LD`) or `4'h3` (`OP_DMA_ST`)
 - `[59]`: `base_sel` (`0`: `REG_DMA_BASE0`, `1`: `REG_DMA_BASE1`)
 - `[58:56]`: `buf_sel[2:0]` (`3'd0`: `ABUF`, `3'd1`: `WBUF`, `3'd2`: `SBUF`, `3'd3`: `OBUF`, `3'd4`: `IMEM`)
-- `[55:44]`: `buf_word_addr[11:0]` (starting 32-bit word index in selected scratchpad, `0..1023`; `buf_word_addr[11:10]` must be `2'b00`; for `IMEM`, indexes 32-bit half-instructions `0..127`)
+- `[55]`: `async_bg` (`OP_DMA_LD` on `ABUF`/`WBUF` only: `1` = launch non-blocking background DMA into `~comp_bank` and immediately advance `PC` so compute overlaps DMA; `0` = blocking)
+- `[54]`: Reserved (`0`)
+- `[53:44]`: `buf_word_addr[9:0]` (starting 32-bit word index in selected scratchpad, `0..1023`; for `IMEM`, indexes 32-bit half-instructions `0..127`)
 - `[43:36]`: `num_rows[7:0]` (number of 2D rows; `0` is treated as `1`)
 - `[35:28]`: `words_per_row[7:0]` (32-bit words transferred per row; `0` retires as a 0-word no-op in memory DMA mode, or selects `REG_STREAM_PTR[31:16]` word count in `OP_DMA_ST` stream egress mode)
 - `[27:16]`: `ext_row_stride_bytes[11:0]`:
@@ -306,8 +331,51 @@ y  = activation(x, act_mode_i)
 #### 7. `OP_HALT` (`opcode = 4'h7`)
 - `[63:60]`: `4'h7`
 - `[59]`: `is_break`
-  - `is_break == 1'b0`: Sets `REG_SR.DONE = 1`, clears `BUSY = 0` (triggers `irq_o` if `REG_CR.DONE_IE == 1`).
+  - `is_break == 1'b0`: Drains any active background DMA, sets `REG_SR.DONE = 1`, clears `BUSY = 0` (triggers `irq_o` if `REG_CR.DONE_IE == 1`).
   - `is_break == 1'b1`: Sets `REG_SR.BREAK = 1`, clears `BUSY = 0`, and advances `PC <= PC + 1` so software can inspect scratchpads via CSR apertures and resume via `REG_CR.STEP` or `REG_CR.START`.
+
+#### 8. `OP_CONV2D` (`opcode = 4'h8`) — Hardware Sliding-Window 2D Convolution (`im2col`)
+- `[63:60]`: `4'h8`
+- `[59]`: `acc_clear` (`1`: zero accumulator; `0`: accumulate onto `OBUF`)
+- `[58:57]`: `kh_m1` (`KH = kh_m1 + 1`, `1..4`)
+- `[56:55]`: `kw_m1` (`KW = kw_m1 + 1`, `1..4`)
+- `[54:53]`: `stride_m1` (`stride = stride_m1 + 1`, `1..4`)
+- `[52:51]`: `pad` (`0..3` zero-padding around `ABUF` feature map; uses `zp_a` in `PREC_INT8_ASYM`)
+- `[50:47]`: `h_in_m1` (`H_in = 1..16`), `[46:43]`: `w_in_m1` (`W_in = 1..16`)
+- `[42:40]`: `cin_groups_m1` (`C_in_groups = 1..8`), `[39:37]`: `cout_tiles_m1` (`C_out_tiles = 1..8`, `4` channels/tile)
+- `[36:27]`: `abuf_base[9:0]` — input `[H_in, W_in, C_in_groups, words_per_kgrp]`
+- `[26:17]`: `wbuf_base[9:0]` — kernels `[cout_tile, kh, kw, kc, col=0..3, words_per_kgrp]`
+- `[16:7]`: `obuf_base[9:0]` — output `[H_out, W_out, cout_tile, col=0..3]` (automatically masks writes for non-multiple-of-4 `H_out * W_out`)
+- `[6:0]`: `sbuf_w4_base[6:0]` (`sbuf_base = sbuf_w4_base << 2` for `NVFP4`/`INT4` block scales)
+
+#### 9. `OP_POOL` (`opcode = 4'h9`) — Hardware 2D Max / Avg Pooling
+- `[63:60]`: `4'h9`
+- `[59]`: `is_avg` (`0`: `MAXPOOL`, `1`: `AVGPOOL`)
+- `[58]`: `win_3x3` (`0`: `2x2`, `1`: `3x3`), `[57]`: `stride_2` (`0`: stride `1`, `1`: stride `2`)
+- `[56]`: `src_is_abuf`, `[55]`: `dst_is_abuf` (`0`: `OBUF`, `1`: `ABUF`)
+- `[54:53]`: `pool_fmt` (`2'd0`: `FP32`, `2'd1`: `4x SINT8`, `2'd2`: `2x BF16`, `2'd3`: `2x FP16` per word)
+- `[52:51]`: `pad` (`0..3`)
+- `[50:47]`: `h_in_m1`, `[46:43]`: `w_in_m1`, `[42:38]`: `c_words_m1` (`1..32` 32-bit words per pixel)
+- `[37:28]`: `src_base[9:0]`, `[27:18]`: `dst_base[9:0]`
+
+#### 10. `OP_VEC_EW` (`opcode = 4'hA`) — Vector Elementwise, RMSNorm & 3-Pass Softmax
+- `[63:60]`: `4'hA`
+- `[59:57]`: `ew_op` (`3'd0`: `EW_ADD`, `3'd1`: `EW_SUB`, `3'd2`: `EW_MUL`, `3'd3`: `EW_RMSNORM`, `3'd4`: `EW_SOFTMAX`)
+- `[56]`: `srcA_is_abuf` (`0`: `OBUF`, `1`: `ABUF`)
+- `[55]`: `srcB_flag` (`ADD/SUB/MUL`: `srcB_is_abuf`; `RMSNORM`: `use_gamma` reading `FP32` `gamma[0..N-1]` from `SBUF[srcB_base...]`)
+- `[54]`: `dst_is_abuf` (`0`: `OBUF`, `1`: `ABUF`)
+- `[53:52]`: `ew_fmt` (`2'd0`: `FP32`, `2'd1`: `BF16`, `2'd2`: `FP16`, `2'd3`: `INT32` for `ADD/SUB/MUL`)
+- `[51:46]`: `num_rows_m1` (`1..64`), `[45:38]`: `vec_len_m1` (`1..256` elements per row)
+- `[37:28]`: `srcA_base[9:0]`, `[27:18]`: `srcB_base[9:0]`, `[17:8]`: `dst_base[9:0]`
+- `[7:0]`: `aux` (`0`: `eps = 1e-5f`; `aux[7]=1`: read `eps` from `SBUF[aux[6:0]]`; `aux[7]=0, aux!=0`: `eps = 2^(-aux)`)
+- **RMSNorm Math**: Accumulates `sum(x^2)`, computes `1/N` via 16-entry LUT + 3 Newton-Raphson iterations, adds `eps`, evaluates `rsqrt` via bit-seed + 3 Newton-Raphson iterations, and scales `x[i] * rms_inv * gamma[i]`.
+- **Softmax Math**: Pass 1 finds `row_max`; Pass 2 evaluates `exp(x[i] - row_max)` using range reduction `2^k * P_6(u)` (`rel_err < 2e-6`) and accumulates `row_sum`; Pass 3 normalizes by `recip(row_sum)` (`16-entry LUT + 3 NR`).
+
+#### 11. `OP_SYNC_BANK` (`opcode = 4'hB`) — Ping-Pong Bank Swap & DMA Barrier
+- `[63:60]`: `4'hB`
+- `[59]`: `swap_abuf`, `[58]`: `swap_wbuf` (when `set_explicit == 0`: toggles compute bank `0<->1` and enables ping-pong)
+- `[57]`: `set_explicit` (`1`: sets `abuf_comp_bank = inst[55]`, `wbuf_comp_bank = inst[54]`, `pp_abuf_en = inst[53]`, `pp_wbuf_en = inst[52]`)
+- `[56]`: `wait_dma` (waits until any in-flight async background `OP_DMA_LD` completes before swapping banks)
 
 ---
 
@@ -352,10 +420,10 @@ The peripheral decodes a 16 KB (`ADDR_W = 14`) byte-addressed window. Scratchpad
 | Offset | Register / Aperture | Access | Reset | Bit Fields & Description |
 | :--- | :--- | :---: | :---: | :--- |
 | `0x0000` | `REG_CR` | RW | `0x0000_0000` | `[0]` `START` (self-clears; loads `PC = REG_PC_START` and starts execution), `[1]` `STEP` (self-clears; executes 1 instruction at `CUR_PC`, advances `CUR_PC`, and returns to `IDLE`), `[2]` `SOFT_RST` (self-clears; resets FSM/PC/flags/perf), `[3]` `STREAM_IN_EN`, `[4]` `STREAM_OUT_EN`, `[8]` `DONE_IE`, `[9]` `ERR_IE`, `[10]` `BREAK_IE`, `[18:16]` `STREAM_TARGET[2:0]` (`0`: `ABUF`, `1`: `WBUF`, `2`: `SBUF`, `3`: `IMEM`, `4`: `OBUF`) |
-| `0x0004` | `REG_SR` | RO | `0x0000_0000` | `[0]` `DONE`, `[1]` `ERR`, `[2]` `BREAK`, `[8]` `BUSY`, `[9]` `DMA_BUSY`, `[10]` `MAC_BUSY`, `[11]` `SFU_BUSY`, `[23:16]` `CUR_PC[7:0]`, `[27:24]` `ERR_CODE[3:0]` (`4'h1`: PC>=64, `4'h2`: illegal opcode, `4'h3`: DMA bus error, `4'h4`: invalid buffer/scale range) |
+| `0x0004` | `REG_SR` | RO | `0x0000_0000` | `[0]` `DONE`, `[1]` `ERR`, `[2]` `BREAK`, `[8]` `BUSY`, `[9]` `DMA_BUSY`, `[10]` `MAC_BUSY`, `[11]` `SFU_BUSY`, `[23:16]` `CUR_PC[7:0]`, `[27:24]` `ERR_CODE[3:0]` (`4'h1`: PC>=64, `4'h2`: illegal opcode, `4'h3`: DMA bus error, `4'h4`: invalid buffer/scale/conv/pool range), `[28]` `ABUF_BANK`, `[29]` `WBUF_BANK`, `[30]` `PP_ABUF_EN`, `[31]` `PP_WBUF_EN` |
 | `0x0008` | `REG_IFCR` | WO | `0x0000_0000` | `[0]` W1C `DONE`, `[1]` W1C `ERR`, `[2]` W1C `BREAK` |
 | `0x000C` | `REG_PC_START` | RW | `0x0000_0000` | `[7:0]` Initial microcode `IMEM` instruction pointer (`0..63`) loaded on `CR.START` |
-| `0x0010` | `REG_CFG_PREC` | RW | `0x0000_0000` | `[2:0]` `prec_mode`, `[5:3]` `act_mode`, `[8:6]` `out_fmt`, `[23:16]` `zp_a[7:0]`, `[31:24]` `zp_b[7:0]` |
+| `0x0010` | `REG_CFG_PREC` | RW | `0x0000_0000` | `[2:0]` `prec_mode`, `[5:3]` `act_mode`, `[8:6]` `out_fmt`, `[9]` `prec_ext` (`INT4`), `[10]` `int4_scale_en`, `[23:16]` `zp_a[7:0]`, `[31:24]` `zp_b[7:0]` |
 | `0x0014` | `REG_CFG_QUANT` | RW | `0x0000_0000` | `[7:0]` `out_zp[7:0]` (signed INT8 output zero-point), `[15:8]` `nvfp4_out_scale[7:0]` (`FP8 E4M3FN` output scale) |
 | `0x0018` | `REG_GLOBAL_SCALE` | RW | `0x3F80_0000` | `[31:0]` IEEE-754 `FP32` global scale factor (reset = `1.0f`) |
 | `0x001C` | `REG_STREAM_PTR` | RW | `0x0000_0000` | `[15:0]` Scratchpad word pointer (auto-increments on each `s_axis` / `m_axis` beat), `[31:16]` Stream egress word count (used when `CR.STREAM_OUT_EN = 1`) |
@@ -366,6 +434,7 @@ The peripheral decodes a 16 KB (`ADDR_W = 14`) byte-addressed window. Scratchpad
 | `0x0030` | `REG_PERF_DMA_WORDS` | RO | `0x0000_0000` | Total 32-bit words transferred by `OP_DMA_LD` / `OP_DMA_ST` |
 | `0x0034` | `REG_PERF_INST_RET` | RO | `0x0000_0000` | Total 64-bit microcode instructions retired |
 | `0x0038` | `REG_FEATURE_ID` | RO | `0x4E50_5531` | ASCII feature identification magic `"NPU1"` (`32'h4E50_5531`) |
+| `0x003C` | `REG_V2_STAT` | RO | `0x5632_0F00` | v2.0 capability & ping-pong status (`[31:16]` `"V2"`, `[15:8]` `0x0F`, `[3:0]` `{pp_wbuf_en, pp_abuf_en, wbuf_bank, abuf_bank}`) |
 | `0x0400..0x05FC` | `IMEM[0..127]` | RW | `'0` | Microcode instruction SRAM (`64 x 64-bit` instructions = `128 x 32-bit` words) |
 | `0x0800..0x0FFC` | `SBUF[0..511]` | RW | `'0` | Scale & Bias SRAM (`512 x 32-bit` = 2 KB) |
 | `0x1000..0x1FFC` | `ABUF[0..1023]` | RW | `'0` | Activation Scratchpad SRAM (`1024 x 32-bit` = 4 KB) |
@@ -567,3 +636,12 @@ void run_chained_int8_mlp(uint32_t io_base, uint32_t weights_base) {
   while ((TPU_REG(TPU_SR) & 1u) == 0u) {}
 }
 ```
+
+---
+
+## 7. v2.0 Software Toolchain (`ips/17_mini_tpu/sw/`)
+
+- **[tpu_asm.py](../ips/17_mini_tpu/sw/tpu_asm.py)**: Stdlib Python 3 microcode assembler supporting all 12 opcodes (`0x0..0xB`), symbolic loop labels, float literals (`1.0f`), and `--format hex|words32|c|sv` output. Run `python3 ips/17_mini_tpu/sw/tpu_asm.py --self-test` to run its self-check.
+- **[mini_tpu_regs.h](../ips/17_mini_tpu/sw/mini_tpu_regs.h)**: Complete C99/C11 MMIO CSR header and 64-bit ISA encoder macros (`TPU_INST_CONV2D`, `TPU_INST_POOL`, `TPU_INST_VEC_EW`, `TPU_INST_SYNC_BANK`, `TPU_INST_CFG_GSCALE_EXT`, etc.).
+- **[tpu_inference_example.c](../ips/17_mini_tpu/sw/tpu_inference_example.c)**: Bare-metal driver examples for AWQ/GPTQ `INT4` LLM linear + `RMSNorm` + `Softmax`, `BF16` `Conv2D` + `ReLU` + `MaxPool`, and double-buffered ping-pong `OP_GEMM` pipelines.
+

@@ -19,7 +19,9 @@ package mini_tpu_pkg;
     PREC_FP8_E4M3  = 3'd2,
     PREC_FP8_E5M2  = 3'd3,
     PREC_FP8_MIXED = 3'd4,
-    PREC_NVFP4     = 3'd5
+    PREC_NVFP4     = 3'd5,
+    PREC_BF16      = 3'd6,
+    PREC_FP16      = 3'd7
   } prec_mode_e;
 
   typedef enum logic [2:0] {
@@ -37,7 +39,9 @@ package mini_tpu_pkg;
     OUT_INT8       = 3'd2,
     OUT_FP8_E4M3   = 3'd3,
     OUT_FP8_E5M2   = 3'd4,
-    OUT_NVFP4      = 3'd5
+    OUT_NVFP4      = 3'd5,
+    OUT_BF16       = 3'd6,
+    OUT_FP16       = 3'd7
   } out_fmt_e;
 
   typedef enum logic [3:0] {
@@ -48,8 +52,20 @@ package mini_tpu_pkg;
     OP_GEMM        = 4'h4,
     OP_SFU         = 4'h5,
     OP_LOOP        = 4'h6,
-    OP_HALT        = 4'h7
+    OP_HALT        = 4'h7,
+    OP_CONV2D      = 4'h8,
+    OP_POOL        = 4'h9,
+    OP_VEC_EW      = 4'hA,
+    OP_SYNC_BANK   = 4'hB
   } tpu_op_e;
+
+  typedef enum logic [2:0] {
+    EW_ADD         = 3'd0,
+    EW_SUB         = 3'd1,
+    EW_MUL         = 3'd2,
+    EW_RMSNORM     = 3'd3,
+    EW_SOFTMAX     = 3'd4
+  } ew_op_e;
 
   // ---------------------------------------------------------------------------
   // CSR Byte Offsets & Memory-Mapped Scratchpad Apertures (16 KB Window)
@@ -69,10 +85,13 @@ package mini_tpu_pkg;
   localparam logic [31:0] REG_PERF_DMA_WORDS = 32'h0000_0030;
   localparam logic [31:0] REG_PERF_INST_RET  = 32'h0000_0034;
   localparam logic [31:0] REG_FEATURE_ID     = 32'h0000_0038;
+  localparam logic [31:0] REG_V2_STAT        = 32'h0000_003C;
 
-  localparam logic [31:0] TPU_FEATURE_ID     = 32'h4E50_5531; // "NPU1"
+  localparam logic [31:0] TPU_FEATURE_ID     = 32'h4E50_5531; // "NPU1" (v1/v2 backward-compatible)
+  localparam logic [31:0] TPU_V2_CAP_ID      = 32'h5632_0F00; // "V2" + v2.0 capability flags
   localparam logic [31:0] FP32_POS_ZERO      = 32'h0000_0000;
   localparam logic [31:0] FP32_ONE           = 32'h3F80_0000; // 1.0f
+  localparam logic [31:0] FP32_NEG_INF       = 32'hFF80_0000; // -Inf
   localparam logic [31:0] FP32_QNAN          = 32'h7FC0_0000;
 
   localparam logic [31:0] IMEM_BASE          = 32'h0000_0400;
@@ -87,8 +106,13 @@ package mini_tpu_pkg;
   localparam logic [31:0] OBUF_END           = 32'h0000_3FFC;
 
   // ---------------------------------------------------------------------------
-  // NVFP4 (4-bit E2M1, bias 1, no Inf/NaN) Helpers
+  // NVFP4 (4-bit E2M1, bias 1, no Inf/NaN) & SINT4 Helpers
   // ---------------------------------------------------------------------------
+  // Returns exact signed 5-bit integer s5 in [-8, +7] for two's-complement SINT4
+  function automatic logic signed [4:0] sint4_to_s5(input logic [3:0] b);
+    return {b[3], b};
+  endfunction
+
   // Returns exact signed half-integer s5 in [-12, +12], where value = s5 * 0.5
   function automatic logic signed [4:0] e2m1_to_s5(input logic [3:0] b);
     logic signed [4:0] mag;
@@ -618,6 +642,163 @@ package mini_tpu_pkg;
     return s ? -signed'(abs_int) : signed'(abs_int);
   endfunction
 
+  // ---------------------------------------------------------------------------
+  // BF16 (1s/8e/7m, bias 127) & IEEE-754 FP16 (1s/5e/10m, bias 15) Helpers
+  // ---------------------------------------------------------------------------
+  function automatic logic [31:0] bf16_to_fp32(input logic [15:0] b);
+    return {b, 16'd0};
+  endfunction
+
+  function automatic logic [15:0] fp32_to_bf16(input logic [31:0] f);
+    logic        s, guard, sticky, round_up;
+    logic [15:0] rounded;
+    s = f[31];
+    if (f[30:23] == 8'hFF) begin
+      if (f[22:0] != 23'd0) return {s, 8'hFF, 1'b1, f[21:16]}; // qNaN
+      else                  return f[31:16];                    // ±Inf
+    end
+    guard    = f[15];
+    sticky   = |f[14:0];
+    round_up = guard && (sticky || f[16]);
+    rounded  = {1'b0, f[30:16]} + {15'd0, round_up};
+    return {s, rounded[14:0]};
+  endfunction
+
+  function automatic logic [31:0] fp16_to_fp32(input logic [15:0] h);
+    logic       s;
+    logic [4:0] e;
+    logic [9:0] m, norm_m;
+    logic [4:0] lz;
+    logic [7:0] fp32_e;
+    s = h[15];
+    e = h[14:10];
+    m = h[9:0];
+    if (e == 5'h1F) begin
+      if (m == 10'd0) return {s, 8'hFF, 23'd0};
+      else            return {s, 8'hFF, 1'b1, m, 12'd0};
+    end else if (e == 5'd0) begin
+      if (m == 10'd0) begin
+        return {s, 31'd0};
+      end else begin
+        lz     = clz32({m, 22'd0});
+        norm_m = m << (lz + 5'd1);
+        fp32_e = 8'd112 - {3'd0, lz};
+        return {s, fp32_e, norm_m, 13'd0};
+      end
+    end else begin
+      fp32_e = 8'd112 + {3'd0, e};
+      return {s, fp32_e, m, 13'd0};
+    end
+  endfunction
+
+  function automatic logic [15:0] fp32_to_fp16(input logic [31:0] f);
+    logic        s;
+    logic [7:0]  fe;
+    logic [22:0] fm;
+    logic [23:0] sig24;
+    logic [9:0]  q;
+    logic        guard, sticky, round_up;
+    logic [10:0] m_ext;
+    logic signed [9:0] e16, e16_rnd;
+    logic [3:0]  rsh;
+    logic [35:0] s36;
+
+    s  = f[31];
+    fe = f[30:23];
+    fm = f[22:0];
+
+    if (fe == 8'hFF) begin
+      if (fm != 23'd0) return {s, 5'h1F, 10'h200}; // qNaN
+      else             return {s, 5'h1F, 10'd0};   // ±Inf
+    end
+    if (fe > 8'd142) begin
+      return {s, 5'h1F, 10'd0}; // Overflow to ±Inf
+    end
+    if (fe < 8'd102) begin
+      return {s, 15'd0};        // Underflow to ±0.0
+    end
+
+    e16 = signed'({2'b00, fe}) - 10'sd112;
+    if (fe >= 8'd113) begin
+      q        = fm[22:13];
+      guard    = fm[12];
+      sticky   = |fm[11:0];
+      round_up = guard && (sticky || q[0]);
+      m_ext    = {1'b0, q} + {10'd0, round_up};
+      e16_rnd  = e16 + (m_ext[10] ? 10'sd1 : 10'sd0);
+      if (e16_rnd >= 10'sd31) return {s, 5'h1F, 10'd0};
+      else                    return {s, e16_rnd[4:0], m_ext[9:0]};
+    end else begin
+      // Subnormal range: 102 <= fe <= 112 (rsh in 1..11)
+      sig24    = {1'b1, fm};
+      rsh      = 4'(8'd113 - fe);
+      s36      = {sig24, 12'd0} >> rsh;
+      q        = s36[34:25];
+      guard    = s36[24];
+      sticky   = |s36[23:0];
+      round_up = guard && (sticky || q[0]);
+      m_ext    = {1'b0, q} + {10'd0, round_up};
+      return {s, 4'b0000, m_ext};
+    end
+  endfunction
+
+  // ---------------------------------------------------------------------------
+  // Additional Synthesizable FP32 Helpers (Sub, Max, GT, Recip/Rsqrt Seed)
+  // ---------------------------------------------------------------------------
+  function automatic logic [31:0] fp32_sub(input logic [31:0] a, input logic [31:0] b);
+    logic b_nan;
+    b_nan = (b[30:23] == 8'hFF) && (b[22:0] != 23'd0);
+    if (b_nan) return FP32_QNAN;
+    return fp32_add(a, {~b[31], b[30:0]});
+  endfunction
+
+  function automatic logic fp32_gt(input logic [31:0] a, input logic [31:0] b);
+    logic a_nan, b_nan;
+    a_nan = (a[30:23] == 8'hFF) && (a[22:0] != 23'd0);
+    b_nan = (b[30:23] == 8'hFF) && (b[22:0] != 23'd0);
+    if (a_nan || b_nan) return 1'b0;
+    if ((a[30:0] == 31'd0) && (b[30:0] == 31'd0)) return 1'b0;
+    if (a[31] != b[31]) return !a[31];
+    if (!a[31]) return (a[30:0] > b[30:0]);
+    else        return (a[30:0] < b[30:0]);
+  endfunction
+
+  function automatic logic [31:0] fp32_max(input logic [31:0] a, input logic [31:0] b);
+    logic a_nan, b_nan;
+    a_nan = (a[30:23] == 8'hFF) && (a[22:0] != 23'd0);
+    b_nan = (b[30:23] == 8'hFF) && (b[22:0] != 23'd0);
+    if (a_nan) return b;
+    if (b_nan) return a;
+    return fp32_gt(a, b) ? a : b;
+  endfunction
+
+  // 16-entry initial approximation LUT for 1 / m where m in [1.0, 2.0)
+  function automatic logic [31:0] fp32_recip_init(input logic [3:0] idx);
+    unique case (idx)
+      4'd0:  return 32'h3F78_3E10;
+      4'd1:  return 32'h3F6A_0EA1;
+      4'd2:  return 32'h3F5D_67C9;
+      4'd3:  return 32'h3F52_0D21;
+      4'd4:  return 32'h3F47_CE0C;
+      4'd5:  return 32'h3F3E_82FA;
+      4'd6:  return 32'h3F36_0B61;
+      4'd7:  return 32'h3F2E_4C41;
+      4'd8:  return 32'h3F27_2F05;
+      4'd9:  return 32'h3F20_A0A1;
+      4'd10: return 32'h3F1A_90E8;
+      4'd11: return 32'h3F14_F209;
+      4'd12: return 32'h3F0F_B824;
+      4'd13: return 32'h3F0A_D8F3;
+      4'd14: return 32'h3F06_4B8A;
+      4'd15: return 32'h3F02_0821;
+    endcase
+  endfunction
+
+  // Fast inverse square root initial bit-approximation seed (x > 0)
+  function automatic logic [31:0] fp32_rsqrt_init(input logic [31:0] x);
+    return 32'h5F37_5A86 - {1'b0, x[31:1]};
+  endfunction
+
   // RNE FP32 + signed 8-bit zero-point, clamped to signed INT8 [-128, +127]
   function automatic logic signed [7:0] fp32_to_int8_zp(
     input logic [31:0] f,
@@ -711,6 +892,7 @@ package mini_tpu_pkg;
       REG_PERF_MACS, REG_PERF_DMA_WORDS, REG_PERF_INST_RET: return 32'h0000_0000;
       REG_GLOBAL_SCALE:                                     return FP32_ONE;
       REG_FEATURE_ID:                                       return TPU_FEATURE_ID;
+      REG_V2_STAT:                                          return TPU_V2_CAP_ID;
       default:                                              return 32'h0000_0000;
     endcase
   endfunction

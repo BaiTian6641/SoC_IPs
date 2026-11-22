@@ -1,0 +1,9 @@
+ips/51_axi_pmu_trace/rtl/axi_pmu_pkg.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_latency.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_trace_buf.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_core.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_trace_wb.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_trace_axi.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_trace_tl.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_trace_apb.sv
+ips/51_axi_pmu_trace/rtl/axi_pmu_trace_top.sv

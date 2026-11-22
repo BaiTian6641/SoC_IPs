@@ -2,6 +2,28 @@
 
 All notable changes to the SystemVerilog IP Core Collection are documented in this file.
 
+## [4.0.0] - 2026-11-22
+
+### Added
+- **11 New Quad-Bus Memory, AI/Vision/Codec, AP Coherency, & Industrial/Power IPs (`ips/41`..`51`)**:
+  - `ips/41_lpddr3_ctrl`: JEDEC JESD209-2/3B LPDDR2/LPDDR3 SDRAM Controller (`lpddr3_ctrl_top`, 10-bit DDR `CA[9:0]`, 8-bank FR-FCFS with `REFPB`, `MR41`/`MR48`/`MR42` CA calibration, `PASR`/`DPD`, DFI & Soft PHY, `sw/lpddr3_regs.h`, `sw/lpddr3_init_example.c`).
+  - `ips/42_lpddr4_ctrl`: Dual-Channel LPDDR4/LPDDR4X SDRAM Controller (`lpddr4_ctrl_top`, dual 16-bit sub-channels, 6-bit multi-cycle `CA[5:0]`, `MWR`, `DBI-WR`/`DBI-RD`, glitch-free `FSP0`/`FSP1` DVFS, `MPC` training, DFI 4.0/5.0 & Soft PHY, `sw/lpddr4_regs.h`, `sw/lpddr4_init_example.c`).
+  - `ips/43_ddr_dimm_ctrl`: Multi-Rank DDR3/DDR4 DIMM Controller (`ddr_dimm_ctrl_top`, UDIMM/SO-DIMM/RDIMM/LRDIMM + CAMM2 `DUAL_CH_SUB`, I2C SPD EEPROM auto-discovery + JC42.4 TSOD 2x refresh, RCD/DB control words, Fly-By Write-Leveling + Read-Gate MPR training, SECDED(72,64) ECC, DFI & Soft PHY, `sw/ddr_dimm_regs.h`, `sw/ddr_dimm_spd_example.c`).
+  - `ips/44_sdram_hp`: High-Throughput 4-Bank Open-Page SDR SDRAM Controller (`sdram_hp_top`, `SDRAM_DATA_W=16/32`, 2-slot look-ahead `PRE`/`ACT`, Auto-PD/SRE, `sw/sdram_hp_regs.h`, `sw/sdram_hp_example.c`).
+  - `ips/45_isp_lite`: 6-Stage Camera ISP-Lite AXI4-Stream Pipeline (`isp_lite_top`, BLC, DPC, bilinear Demosaic, 2A AWB/AE stats, 3x3 CCM, 256-entry Gamma LUT, 2x2 downscale, `sw/isp_lite_regs.h`, `sw/isp_camera_example.c`).
+  - `ips/46_lz4_jpeg_codec`: Dual-Engine Hardware LZ4 Block Compressor/Decompressor & Baseline 8x8 JPEG Codec (`lz4_jpeg_top`, AXI4-Stream + CSR FIFOs + DMA, `sw/codec_regs.h`, `sw/codec_lz4_jpeg_example.c`).
+  - `ips/47_l2_cache`: 4-Way Set-Associative Write-Back AXI4 L2 Cache Controller (`l2_cache_top`, 3-bit tree PLRU, SECDED(39,32) ECC, dirty victim buffer, clean/invalidate maintenance, way locking, uncacheable bypass window, `sw/l2_cache_regs.h`, `sw/l2_cache_maint_example.c`).
+  - `ips/48_iommu`: Hardware IOMMU / SMMU-Lite (`iommu_top`, `Sv32` 2-level PTW for 4KB pages & 4MB superpages, 16-entry TLB, 16 stream contexts, depth-4 fault FIFO, `sw/iommu_regs.h`, `sw/iommu_pagetable_example.c`).
+  - `ips/49_foc_motor`: Hardware 3-Phase PMSM/BLDC FOC Accelerator (`foc_motor_top`, CORDIC sin/cos, 2/3-shunt Clarke/Park, dual Q4.12 PI + circle limiter, 7-segment SVPWM, dead-time & 0-cycle fault, `sw/foc_regs.h`, `sw/foc_motor_loop_example.c`).
+  - `ips/50_smbus_pmbus`: SMBus 3.0 / PMBus 1.3 Host & Target Controller (`smbus_pmbus_top`, HW PEC CRC-8, `SMBALERT#` ARA `7'h0C`, ARP `7'h61`, bus timeouts, 64B FIFOs, `sw/smbus_pmbus_regs.h`, `sw/smbus_pmbus_example.c`).
+  - `ips/51_axi_pmu_trace`: Non-Intrusive AXI4 Performance Monitor Unit, 8-Bin Latency Histogrammer, & Triggered 128-bit Circular Trace SRAM (`axi_pmu_trace_top`, atomic shadow snapshot, `sw/axi_pmu_regs.h`, `sw/axi_pmu_profile_example.c`).
+- **Software Drivers & Bare-Metal Bring-Up Guide (`docs/12_software_drivers_and_bringup.md`)**:
+  - Added complete `ips/*/sw/` inventory, `make check_sw` target (C99 `-Wall -Wextra -fsyntax-only` across all 12 drivers + `tpu_asm.py --self-test` + `test_pioasm.py`), and 4 end-to-end SoC bring-up recipes with Mermaid diagrams.
+
+### Changed
+- **Mini-TPU / NPU v2.0 Upgrade (`ips/17_mini_tpu`)**: Added `BF16`, `FP16`, `INT4` + block-scaled `INT4`, `OP_CONV2D`, `OP_POOL`, `OP_VEC_EW` (incl. `RMSNorm` & 3-pass `Softmax`), `OP_SYNC_BANK` ping-pong double buffering, `tb_mini_tpu_v2`, `sw/tpu_asm.py` (64-bit microcode assembler), `sw/mini_tpu_regs.h`, `sw/tpu_inference_example.c`, and updated `docs/05_mini_tpu_npu_guide.md` while keeping 100% v1.0 compatibility (`tb_mini_tpu`).
+- **RAM-Safe Build Defaults & FuseSoC Manifest (`Makefile`, `sv_ip_library.core`)**: Set default `VJ ?= 2` with `sim_serial` alias for memory-constrained laptops (keeping `sim_jobs` for workstations), updated VLNV to `open:soc:sv_peripherals_interconnect_suite:4.0.0` (`51` IP filesets, `106` lint tops, `73` self-checking testbenches, `592` Yosys-checked RTL files).
+
 ## [3.0.0] - 2026-11-21
 
 ### Added

@@ -119,6 +119,12 @@ module mini_tpu_sfu
                            quant_w_s2[1][3:0], quant_w_s2[0][3:0]};
         res_num_bytes_d = 5'd2;
       end
+      OUT_BF16,
+      OUT_FP16: begin
+        res_words_d[0]  = {quant_w_s2[1][15:0], quant_w_s2[0][15:0]};
+        res_words_d[1]  = {quant_w_s2[3][15:0], quant_w_s2[2][15:0]};
+        res_num_bytes_d = 5'd8;
+      end
       default: begin
         res_words_d     = quant_w_s2;
         res_num_bytes_d = 5'd16;

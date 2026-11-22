@@ -1,0 +1,16 @@
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_pkg.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_ecc72.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_spd_i2c.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_rcd_db.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_train.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_phy_soft.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_sched.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_core.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_axi4_to_mem.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_wb_to_mem.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_tl_to_mem.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_ctrl_wb.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_ctrl_axi.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_ctrl_tl.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_ctrl_apb.sv
+ips/43_ddr_dimm_ctrl/rtl/ddr_dimm_ctrl_top.sv

@@ -9,19 +9,21 @@
 #   make lint                 lint every top, one verilator run per top
 #   make lint_fast            same, parallel (JOBS=N)
 #   make lint_<top>           lint a single top             (e.g. make lint_gpio_top)
-#   make sim                  build + run every testbench
-#   make sim_jobs             same, testbenches in parallel (JOBS=N)
+#   make sim                  build + run every testbench serially (RAM-safe: VJ=2)
+#   make sim_serial           alias for `make sim` (recommended on laptops / limited RAM)
+#   make sim_jobs             parallel testbenches (workstation: e.g. `make sim_jobs JOBS=8 VJ=4`)
 #   make <tb_name>            build + run a single testbench (e.g. make tb_gpio)
 #   make list                 print LINT_TOPS and ALL_TBS
 #   make check_lists          consistency check of filelists / FuseSoC core vs. tables below
 #   make check_yosys          static Yosys/FPGA/ASIC synthesis compatibility check
+#   make check_sw             C99 -Wall -Wextra syntax check of ips/*/sw/*.c + Python tool tests
 #   make core                 regenerate sv_ip_library.core (scripts/gen_fusesoc_core.py)
 #   make clean
 #
 # Each testbench is compiled from ONLY the files it needs:
 #     common.f + interconnect.f + ips/<NN>/filelist.f (for its TB_IPS) + BFMs + TB.
 # All outputs live under $(BUILD) (default ./build), one directory per target, so
-# parallel runs never collide.  Options:  SIMARGS="+seed=7"  VJ=<verilator -j>  V=1
+# parallel runs never collide.  Options:  SIMARGS="+seed=7"  VJ=<verilator -j, default 2>  V=1
 # =============================================================================
 
 VERILATOR ?= verilator
@@ -30,7 +32,7 @@ VSIM      ?= vsim
 BUILD     ?= build
 SIMARGS   ?=
 JOBS      ?= $(shell sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
-VJ        ?= 0
+VJ        ?= 2
 
 ifeq ($(V),1)
   Q :=
@@ -111,10 +113,22 @@ IP_IPC_DBG  := 37_ipc_debug
 IP_DDR      := 38_ddr_ctrl
 IP_SERDES   := 39_serdes_combo
 IP_USB2     := 40_usb2_otg
+IP_LPDDR3   := 41_lpddr3_ctrl
+IP_LPDDR4   := 42_lpddr4_ctrl
+IP_DDR_DIMM := 43_ddr_dimm_ctrl
+IP_SDRAM_HP := 44_sdram_hp
+IP_ISP      := 45_isp_lite
+IP_CODEC    := 46_lz4_jpeg_codec
+IP_L2       := 47_l2_cache
+IP_IOMMU    := 48_iommu
+IP_FOC      := 49_foc_motor
+IP_SMBUS    := 50_smbus_pmbus
+IP_AXIPMU   := 51_axi_pmu_trace
 ALL_IPS   := $(IP_UART) $(IP_SPI) $(IP_I2C) $(IP_XSPI) $(IP_HYPER) $(IP_EXTMEM) \
              $(IP_NVPSRAM) $(IP_GPIO) $(IP_I2S) $(IP_LEDC) $(IP_JTAG) $(IP_CAN) \
              $(IP_ETH) $(IP_DVI) $(IP_GDMA) $(IP_GFX) $(IP_TPU) $(IP_RMT) $(IP_IR) $(IP_HUB75) $(IP_PARIF) $(IP_FLEXBUS) $(IP_PIO) $(IP_TIMERS) $(IP_INTC) $(IP_WDTRTC) $(IP_SDMMC) $(IP_CRYPTO) $(IP_CORDIC) $(IP_FFT) $(IP_DSP_FILT) \
-             $(IP_PKA) $(IP_OTP_TRNG) $(IP_CSI2) $(IP_DSI) $(IP_SYSCTRL) $(IP_IPC_DBG) $(IP_DDR) $(IP_SERDES) $(IP_USB2)
+             $(IP_PKA) $(IP_OTP_TRNG) $(IP_CSI2) $(IP_DSI) $(IP_SYSCTRL) $(IP_IPC_DBG) $(IP_DDR) $(IP_SERDES) $(IP_USB2) \
+             $(IP_LPDDR3) $(IP_LPDDR4) $(IP_DDR_DIMM) $(IP_SDRAM_HP) $(IP_ISP) $(IP_CODEC) $(IP_L2) $(IP_IOMMU) $(IP_FOC) $(IP_SMBUS) $(IP_AXIPMU)
 
 # ---- Lint tops: interconnect / common (no IP needed) --------------------------
 $(eval $(call LINT,wb_xbar,))
@@ -216,6 +230,17 @@ $(eval $(call LINT,adc_pdm_top,$(IP_IPC_DBG)))
 $(eval $(call LINT,ddr_ctrl_top,$(IP_DDR)))
 $(eval $(call LINT,serdes_combo_top,$(IP_SERDES)))
 $(eval $(call LINT,usb2_otg_top,$(IP_USB2)))
+$(eval $(call LINT,lpddr3_ctrl_top,$(IP_LPDDR3)))
+$(eval $(call LINT,lpddr4_ctrl_top,$(IP_LPDDR4)))
+$(eval $(call LINT,ddr_dimm_ctrl_top,$(IP_DDR_DIMM)))
+$(eval $(call LINT,sdram_hp_top,$(IP_SDRAM_HP)))
+$(eval $(call LINT,isp_lite_top,$(IP_ISP)))
+$(eval $(call LINT,lz4_jpeg_top,$(IP_CODEC)))
+$(eval $(call LINT,l2_cache_top,$(IP_L2)))
+$(eval $(call LINT,iommu_top,$(IP_IOMMU)))
+$(eval $(call LINT,foc_motor_top,$(IP_FOC)))
+$(eval $(call LINT,smbus_pmbus_top,$(IP_SMBUS)))
+$(eval $(call LINT,axi_pmu_trace_top,$(IP_AXIPMU)))
 
 # ---- Testbenches ----------------------------------------------------------------
 $(eval $(call TB,tb_tech_cells,tb/tb_tech_cells.sv,,))
@@ -271,6 +296,18 @@ $(eval $(call TB,tb_ipc_debug,ips/37_ipc_debug/tb/tb_ipc_debug.sv,$(IP_IPC_DBG),
 $(eval $(call TB,tb_ddr_ctrl,ips/38_ddr_ctrl/tb/tb_ddr_ctrl.sv,$(IP_DDR),ips/38_ddr_ctrl/tb/tb_ddr_dram_model.sv))
 $(eval $(call TB,tb_serdes_combo,ips/39_serdes_combo/tb/tb_serdes_combo.sv,$(IP_SERDES),))
 $(eval $(call TB,tb_usb2_otg,ips/40_usb2_otg/tb/tb_usb2_otg.sv,$(IP_USB2),))
+$(eval $(call TB,tb_mini_tpu_v2,ips/17_mini_tpu/tb/tb_mini_tpu_v2.sv,$(IP_TPU),))
+$(eval $(call TB,tb_lpddr3_ctrl,ips/41_lpddr3_ctrl/tb/tb_lpddr3_ctrl.sv,$(IP_LPDDR3),ips/41_lpddr3_ctrl/tb/tb_lpddr3_dram_model.sv))
+$(eval $(call TB,tb_lpddr4_ctrl,ips/42_lpddr4_ctrl/tb/tb_lpddr4_ctrl.sv,$(IP_LPDDR4),ips/42_lpddr4_ctrl/tb/tb_lpddr4_dram_model.sv))
+$(eval $(call TB,tb_ddr_dimm_ctrl,ips/43_ddr_dimm_ctrl/tb/tb_ddr_dimm_ctrl.sv,$(IP_DDR_DIMM),ips/43_ddr_dimm_ctrl/tb/tb_ddr_dimm_model.sv))
+$(eval $(call TB,tb_sdram_hp,ips/44_sdram_hp/tb/tb_sdram_hp.sv,$(IP_SDRAM_HP),ips/44_sdram_hp/tb/tb_sdram_hp_model.sv))
+$(eval $(call TB,tb_isp_lite,ips/45_isp_lite/tb/tb_isp_lite.sv,$(IP_ISP),))
+$(eval $(call TB,tb_lz4_jpeg_codec,ips/46_lz4_jpeg_codec/tb/tb_lz4_jpeg_codec.sv,$(IP_CODEC),))
+$(eval $(call TB,tb_l2_cache,ips/47_l2_cache/tb/tb_l2_cache.sv,$(IP_L2),))
+$(eval $(call TB,tb_iommu,ips/48_iommu/tb/tb_iommu.sv,$(IP_IOMMU),))
+$(eval $(call TB,tb_foc_motor,ips/49_foc_motor/tb/tb_foc_motor.sv,$(IP_FOC),))
+$(eval $(call TB,tb_smbus_pmbus,ips/50_smbus_pmbus/tb/tb_smbus_pmbus.sv,$(IP_SMBUS),))
+$(eval $(call TB,tb_axi_pmu_trace,ips/51_axi_pmu_trace/tb/tb_axi_pmu_trace.sv,$(IP_AXIPMU),))
 
 # ---- APB fabric / retrofit testbenches (owner: apb) ----------------------------
 $(eval $(call TB,tb_apb_fabric,tb/tb_apb_fabric.sv,,))
@@ -295,7 +332,7 @@ endef
 # =============================================================================
 LINT_TARGETS := $(addprefix lint_,$(LINT_TOPS))
 
-.PHONY: all help list tables core lint lint_fast sim sim_jobs summary check_lists check_yosys clean \
+.PHONY: all help list tables core lint lint_fast sim sim_serial sim_jobs summary check_lists check_yosys check_sw clean \
         questa vcs xrun $(LINT_TARGETS) $(ALL_TBS)
 
 all: lint sim
@@ -331,8 +368,10 @@ $(LINT_TARGETS): lint_%:
 sim: $(ALL_TBS)
 	@$(MAKE) --no-print-directory summary
 
+sim_serial: sim
+
 sim_jobs:
-	$(MAKE) -j$(JOBS) VJ=1 sim
+	$(MAKE) -j$(JOBS) VJ=$(if $(filter command line,$(origin VJ)),$(VJ),1) sim
 
 summary:
 	@pass=0; fail=0; for t in $(ALL_TBS); do \
@@ -378,6 +417,19 @@ core:
 # static Yosys / OpenLane / ASIC synthesis compatibility check
 check_yosys:
 	python3 scripts/check_yosys_compat.py
+
+# C99 syntax check of software driver headers/examples + Python tool unit tests
+check_sw:
+	@rc=0; \
+	for f in ips/*/sw/*.c; do \
+	  echo "=== Checking $$f ==="; \
+	  $(CC) -std=c99 -Wall -Wextra -fsyntax-only "$$f" || rc=1; \
+	done; \
+	echo "=== Checking tpu_asm.py --self-test ==="; \
+	python3 ips/17_mini_tpu/sw/tpu_asm.py --self-test || rc=1; \
+	echo "=== Checking test_pioasm.py ==="; \
+	python3 tools/test_pioasm.py || rc=1; \
+	if [ $$rc -eq 0 ]; then echo "[CHECK_SW OK] all C drivers + Python tools clean"; fi; exit $$rc
 
 # ---- Other simulators (best effort, not runnable on the reference machine) -----
 # All TB sources are compiled together; tops are run one by one.
